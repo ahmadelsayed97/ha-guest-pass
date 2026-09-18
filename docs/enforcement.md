@@ -5,6 +5,15 @@ Default deny. Anything not listed is answered by the proxy and never reaches HA.
 A credential resolves to a session: guest id plus scope. Scope is entity ids
 (`view` or `control`) and dashboard url paths. See `scope.example.json`.
 
+Scopes are written as areas plus entity overrides (`guest-scope.example.json`)
+and resolved against HA's registries by `bun run resolve`, which writes the
+entity list the proxy loads. Nothing is re-resolved until you run it again.
+Area `control` grants control to light, switch, fan, cover, media_player,
+climate, humidifier and vacuum entities; everything else in the area gets
+view. Locks, scenes, scripts, automations, buttons and input helpers need an
+entity override. Disabled, hidden, config and diagnostic entities are skipped.
+An override grants any level to any entity, or `none` to remove one.
+
 ## WebSocket, guest to HA
 
 Forwarded as-is: `ping`, `unsubscribe_events`, `lovelace/resources`,

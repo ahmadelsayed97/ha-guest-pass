@@ -94,6 +94,21 @@ export function startFakeHA(token = "REAL-HA-TOKEN-" + crypto.randomUUID()): Fak
           case "call_service":
             result({ context: { id: "ctx" }, response: { secret: true } });
             return;
+          case "config/area_registry/list":
+            result([{ area_id: "kitchen", name: "Kitchen" }]);
+            return;
+          case "config/device_registry/list":
+            result([{ id: "dev-1", area_id: "kitchen" }]);
+            return;
+          case "config/entity_registry/list":
+            result([
+              { entity_id: "light.kitchen", area_id: "kitchen", device_id: null, disabled_by: null, hidden_by: null, entity_category: null },
+              { entity_id: "sensor.temp", area_id: null, device_id: "dev-1", disabled_by: null, hidden_by: null, entity_category: null },
+            ]);
+            return;
+          case "fail/please":
+            ws.send(JSON.stringify({ id: msg.id, type: "result", success: false, error: { code: "boom", message: "nope" } }));
+            return;
           default:
             result({ echo: msg });
         }

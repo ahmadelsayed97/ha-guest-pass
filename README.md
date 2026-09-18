@@ -4,17 +4,23 @@ Reverse proxy that gives guests temporary access to a Home Assistant dashboard
 without creating an HA user. LAN only.
 
 The proxy holds the long-lived token; guests never see it. Everything a guest
-can see or do is listed in a scope file, and anything not listed is refused
-before it reaches HA. See `docs/enforcement.md` for the exact rules.
+can see or do comes from a scope you define by area and entity, and anything
+not in it is refused before it reaches HA. See `docs/enforcement.md` for the
+exact rules.
 
 ## Running
 
 ```sh
 cp .env.example .env
-cp scope.example.json scope.json
+cp guest-scope.example.json guest-scope.json   # areas, overrides, dashboards
 bun install
+bun run resolve guest-scope.json               # writes scope.json from HA's registries
 bun run dev
 ```
+
+`resolve` prints every entity it granted and where it came from. Run it again
+whenever the definition or your devices change; the proxy only reads
+`scope.json`.
 
 Then open `http://<proxy-host>:8124/guest#<GUEST_SECRET>` from a device on the
 LAN. The secret goes in the URL fragment so it never reaches the server or its

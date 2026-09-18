@@ -1,4 +1,4 @@
-type Permission = "view" | "control";
+export type Permission = "view" | "control";
 
 export interface Scope {
   canView(entityId: string): boolean;

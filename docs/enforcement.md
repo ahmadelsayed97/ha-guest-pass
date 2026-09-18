@@ -2,17 +2,22 @@
 
 Default deny. Anything not listed is answered by the proxy and never reaches HA.
 
-A credential resolves to a session: guest id plus scope. Scope is entity ids
-(`view` or `control`) and dashboard url paths. See `scope.example.json`.
+A guest link carries a signed token (HS256, `SIGNING_KEY`) with the guest id,
+a token id and an expiry. On every request the proxy verifies the signature
+and expiry, loads the guest record, and checks it is not revoked and its own
+expiry has not passed. That yields a session: guest id plus scope. Scope is
+entity ids (`view` or `control`) and dashboard url paths, resolved from areas
+and overrides when the guest is created and stored with the record. Tokens are
+never stored. Open sockets are closed at expiry and on revoke.
 
-Scopes are written as areas plus entity overrides (`guest-scope.example.json`)
-and resolved against HA's registries by `bun run resolve`, which writes the
-entity list the proxy loads. Nothing is re-resolved until you run it again.
 Area `control` grants control to light, switch, fan, cover, media_player,
 climate, humidifier and vacuum entities; everything else in the area gets
 view. Locks, scenes, scripts, automations, buttons and input helpers need an
 entity override. Disabled, hidden, config and diagnostic entities are skipped.
 An override grants any level to any entity, or `none` to remove one.
+
+The admin page and API under `/admin` need `ADMIN_SECRET` as a bearer token.
+The admin secret is not a guest credential and vice versa.
 
 ## WebSocket, guest to HA
 
@@ -30,8 +35,9 @@ Rewritten: `subscribe_entities` gets `entity_ids` set to the scope.
 service-registry subscriptions are accepted but never deliver.
 
 Answered locally: `supported_features` (success, so HA never coalesces),
-`auth/current_user` (guest, non-admin), `frontend/get_user_data` (null),
-area/device/floor/label registry lists (empty).
+`auth/current_user` (guest, non-admin), `frontend/get_user_data` and
+`frontend/subscribe_user_data` (null, the latter with one event so the
+sidebar stops waiting), area/device/floor/label registry lists (empty).
 
 Everything else: `unknown_command`. Listed types failing a check:
 `unauthorized`.
@@ -52,8 +58,8 @@ frames close the guest socket.
 GET and HEAD only. Allowed: `/`, `/<scoped dashboard>/...`, HA static paths,
 `/local/`, `/hacsfiles/`, and `/api/camera_proxy`, `/api/media_player_proxy`,
 `/api/image/serve` for a scoped entity with a valid credential.
-`/guest/session` and `/auth/token` are handled by the proxy. Everything else
-is 404.
+`/guest/session`, `/auth/token`, `/auth/authorize` (the access-ended page) and
+`/admin` are handled by the proxy. Everything else is 404.
 
 ## Dashboard config
 

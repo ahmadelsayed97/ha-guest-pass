@@ -7,8 +7,8 @@ const scope = parseScope({
   dashboards: ["lovelace-guest"],
   entities: { "light.kitchen": "control", "switch.pool": "control", "sensor.temp": "view", "lock.front": "view" },
 });
-const session: Session = { user: { id: "guest-7", name: "Ada" }, scope };
-const sessionFor = (s: Session["scope"]): Session => ({ user: session.user, scope: s });
+const session: Session = { user: { id: "guest-7", name: "Ada" }, scope, expiresAt: Date.now() + 3600_000 };
+const sessionFor = (s: Session["scope"]): Session => ({ ...session, scope: s });
 
 const inbound = (msg: unknown, kindOf: (id: number) => string | undefined = () => undefined): InboundDecision =>
   inspectInbound(msg, session, kindOf);
@@ -105,6 +105,15 @@ describe("local replies", () => {
     });
   });
 
+  test("frontend/subscribe_user_data is answered locally with a null value", () => {
+    expect(inbound({ id: 4, type: "frontend/subscribe_user_data", key: "sidebar" })).toEqual({
+      action: "reply",
+      message: { id: 4, type: "result", success: true, result: null },
+      kind: "local_subscription",
+      events: [{ id: 4, type: "event", event: { value: null } }],
+    });
+  });
+
   test("frontend/get_user_data returns null", () => {
     expect(inbound({ id: 4, type: "frontend/get_user_data", key: "sidebar" })).toEqual({
       action: "reply",
@@ -157,16 +166,16 @@ describe("subscribe_events", () => {
     "device_registry_updated",
     "floor_registry_updated",
     "label_registry_updated",
-  ])("%s is accepted locally as a silent subscription and never forwarded", (event_type) => {
+  ])("%s is accepted locally as a local subscription and never forwarded", (event_type) => {
     expect(inbound({ id: 4, type: "subscribe_events", event_type })).toEqual({
       action: "reply",
       message: { id: 4, type: "result", success: true, result: null },
-      kind: "silent_subscription",
+      kind: "local_subscription",
     });
   });
 
-  test("unsubscribing a silent subscription is answered locally", () => {
-    const kindOf = (id: number) => (id === 4 ? "silent_subscription" : undefined);
+  test("unsubscribing a local subscription is answered locally", () => {
+    const kindOf = (id: number) => (id === 4 ? "local_subscription" : undefined);
     expect(inbound({ id: 9, type: "unsubscribe_events", subscription: 4 }, kindOf)).toEqual({
       action: "reply",
       message: { id: 9, type: "result", success: true, result: null },
@@ -471,8 +480,8 @@ describe("outbound events", () => {
     expect(filterOutbound(msg, sessionFor(withDefault), () => "subscribe_events")).toEqual(msg);
   });
 
-  test("events on silent subscriptions are dropped even when HA sends them", () => {
-    expect(filterOutbound({ id: 4, type: "event", event: { event_type: "state_changed", data: { entity_id: "light.kitchen" } } }, session, () => "silent_subscription")).toBeNull();
+  test("events on local subscriptions are dropped even when HA sends them", () => {
+    expect(filterOutbound({ id: 4, type: "event", event: { event_type: "state_changed", data: { entity_id: "light.kitchen" } } }, session, () => "local_subscription")).toBeNull();
   });
 
   test("panels_updated and themes_updated pass", () => {

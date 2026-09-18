@@ -6,8 +6,10 @@ type Message = Record<string, unknown>;
 
 export type InboundDecision =
   | { action: "forward"; message: Message; kind: string }
-  | { action: "reply"; message: Message; kind?: string }
+  | { action: "reply"; message: Message; kind?: string; events?: Message[] }
   | { action: "close" };
+
+type ReplyDecision = Extract<InboundDecision, { action: "reply" }>;
 
 export type KindOf = (id: number) => string | undefined;
 
@@ -20,7 +22,7 @@ const TOGGLE_SERVICES = new Set(["turn_on", "turn_off", "toggle"]);
 const NON_ENTITY_TARGET_KEYS = ["area_id", "device_id", "floor_id", "label_id"];
 const TRANSLATION_PARAMS = ["language", "category", "integration", "config_flow"];
 const DEFAULT_DASHBOARD = "lovelace";
-export const SILENT_SUBSCRIPTION = "silent_subscription";
+export const LOCAL_SUBSCRIPTION = "local_subscription";
 const SILENT_EVENT_TYPES = new Set([
   "service_registry_updated",
   "service_registered",
@@ -57,8 +59,13 @@ function unknownCommand(id: number): InboundDecision {
   };
 }
 
-function reply(id: number, result: unknown): InboundDecision {
+function reply(id: number, result: unknown): ReplyDecision {
   return { action: "reply", message: { id, type: "result", success: true, result } };
+}
+
+function localSubscription(id: number, event?: Message): ReplyDecision {
+  const decision: ReplyDecision = { ...reply(id, null), kind: LOCAL_SUBSCRIPTION };
+  return event ? { ...decision, events: [{ id, type: "event", event }] } : decision;
 }
 
 function forward(message: Message): InboundDecision {
@@ -93,7 +100,7 @@ const INBOUND_RULES: Record<string, InboundRule> = {
 
   unsubscribe_events: (msg, id, _session, kindOf) => {
     if (!isMessageId(msg.subscription)) return deny(id);
-    if (kindOf(msg.subscription) === SILENT_SUBSCRIPTION) return reply(id, null);
+    if (kindOf(msg.subscription) === LOCAL_SUBSCRIPTION) return reply(id, null);
     return forward({ id, type: msg.type, subscription: msg.subscription });
   },
 
@@ -101,6 +108,7 @@ const INBOUND_RULES: Record<string, InboundRule> = {
   "auth/current_user": (_msg, id, { user }) =>
     reply(id, { id: user.id, name: user.name, is_owner: false, is_admin: false, credentials: [], mfa_modules: [] }),
   "frontend/get_user_data": (_msg, id) => reply(id, { value: null }),
+  "frontend/subscribe_user_data": (_msg, id) => localSubscription(id, { value: null }),
   "config/area_registry/list": (_msg, id) => reply(id, []),
   "config/device_registry/list": (_msg, id) => reply(id, []),
   "config/floor_registry/list": (_msg, id) => reply(id, []),
@@ -110,7 +118,7 @@ const INBOUND_RULES: Record<string, InboundRule> = {
 
   subscribe_events: (msg, id) => {
     if (typeof msg.event_type !== "string") return deny(id);
-    if (SILENT_EVENT_TYPES.has(msg.event_type)) return { ...reply(id, null), kind: SILENT_SUBSCRIPTION };
+    if (SILENT_EVENT_TYPES.has(msg.event_type)) return localSubscription(id);
     if (Object.hasOwn(EVENT_FILTERS, msg.event_type)) return forward({ id, type: msg.type, event_type: msg.event_type });
     return deny(id);
   },

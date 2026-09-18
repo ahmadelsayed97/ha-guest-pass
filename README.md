@@ -3,44 +3,45 @@
 Reverse proxy that gives guests temporary access to a Home Assistant dashboard
 without creating an HA user. LAN only.
 
-The proxy holds the long-lived token; guests never see it. Everything a guest
-can see or do comes from a scope you define by area and entity, and anything
-not in it is refused before it reaches HA. See `docs/enforcement.md` for the
-exact rules.
+The proxy holds the long-lived token; guests never see it. Each guest gets a
+signed link that expires, can be revoked, and only reaches the dashboards and
+entities you picked. Anything else is refused before it reaches HA. See
+`docs/enforcement.md` for the exact rules.
 
 ## Running
 
 ```sh
-cp .env.example .env
-cp guest-scope.example.json guest-scope.json   # areas, overrides, dashboards
+cp .env.example .env   # fill in HA_URL, HA_TOKEN, SIGNING_KEY, ADMIN_SECRET
 bun install
-bun run resolve guest-scope.json               # writes scope.json from HA's registries
 bun run dev
 ```
 
-`resolve` prints every entity it granted and where it came from. Run it again
-whenever the definition or your devices change; the proxy only reads
-`scope.json`.
+Open `http://<proxy-host>:8124/admin` from the LAN, enter the admin secret,
+and create a guest: name, how long, which dashboards, which areas at view or
+control, and any per-entity overrides. Preview shows exactly what would be
+granted. Create gives you a link and a QR code to hand over. The same page
+lists guests and revokes them; revoking closes their open connections.
 
-Then open `http://<proxy-host>:8124/guest#<GUEST_SECRET>` from a device on the
-LAN. The secret goes in the URL fragment so it never reaches the server or its
-logs.
+The link carries the token in the URL fragment, so it never reaches the server
+or its logs. When access ends the guest sees a plain "access has ended" page.
 
 ## How it works
 
-The `/guest` page checks the secret with the proxy, then writes it into
-localStorage in the shape HA's frontend keeps its tokens, so the frontend
-believes it is logged in. The proxy resolves that secret to a session on every
-`/api` request and on the WebSocket `auth` message, then swaps in the real
-token before talking to HA. HA's `/auth/token` endpoint
-is answered by the proxy; the rest of `/auth` is blocked. Requests from outside
-the LAN get a 403 based on the socket address, not headers.
+The `/guest` page checks the token with the proxy, then writes it into
+localStorage in the shape HA's frontend keeps its tokens, so the stock frontend
+believes it is logged in. The proxy verifies the token on every `/api` request
+and on the WebSocket `auth` message, looks up the guest record, and swaps in
+the real token before talking to HA. HA's `/auth/token` endpoint is answered by
+the proxy; the rest of `/auth` is blocked. Requests from outside the LAN get a
+403 based on the socket address, not headers.
 
 On the WebSocket, each message from the guest is checked against an allowlist
 of types and rewritten before forwarding, and each message from HA is filtered
-by the scope before it reaches the guest. Service calls must target
-controllable entities by id; area, device and label targets are refused. Guest
-requests that fail a check get an `unauthorized` result and never reach HA.
+by the guest's scope before it reaches them. Service calls must target
+controllable entities by id; area, device and label targets are refused.
+
+Scopes are resolved when a guest is created and stored with the record. A
+device added to an area later is not granted until you create a new guest.
 
 ## Tests
 

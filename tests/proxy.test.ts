@@ -1,13 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { GUEST_SECRET, opened, recordSocket, startHarness, type Harness } from "./helpers.ts";
+import { opened, recordSocket, startHarness, type Harness } from "./helpers.ts";
 
 let h: Harness;
-beforeEach(() => {
-  h = startHarness();
+beforeEach(async () => {
+  h = await startHarness();
 });
-afterEach(() => {
-  h.stop();
-});
+afterEach(() => h.stop());
 
 async function wsAuth(token: string) {
   const ws = new WebSocket(h.wsUrl);
@@ -21,7 +19,7 @@ async function wsAuth(token: string) {
 
 describe("WebSocket bridge", () => {
   test("valid guest auth: proxy authenticates upstream with real token and relays", async () => {
-    const { ws, rec } = await wsAuth(GUEST_SECRET);
+    const { ws, rec } = await wsAuth(h.token);
     const authOk = JSON.parse(await rec.next());
     expect(authOk).toEqual({ type: "auth_ok", ha_version: h.ha.haVersion });
 
@@ -44,8 +42,9 @@ describe("WebSocket bridge", () => {
     for (const frame of rec.frames) expect(frame).not.toContain(h.ha.token);
   });
 
-  test("forged token of equal length is rejected", async () => {
-    const forged = GUEST_SECRET.slice(0, -1) + (GUEST_SECRET.endsWith("f") ? "e" : "f");
+  test("token with one signature character changed is rejected", async () => {
+    const [header, payload, signature] = h.token.split(".") as [string, string, string];
+    const forged = `${header}.${payload}.${signature[0] === "A" ? "B" : "A"}${signature.slice(1)}`;
     const { rec } = await wsAuth(forged);
     expect(JSON.parse(await rec.next()).type).toBe("auth_invalid");
     await rec.closed;
@@ -91,15 +90,28 @@ describe("WebSocket bridge", () => {
   });
 
   test("second auth frame after authentication closes and is not forwarded", async () => {
-    const { ws, rec } = await wsAuth(GUEST_SECRET);
+    const { ws, rec } = await wsAuth(h.token);
     await rec.next();
     ws.send(JSON.stringify({ type: "auth", access_token: "anything" }));
     expect((await rec.closed).code).toBe(1008);
     expect(h.ha.wsAuthTokens).toEqual([h.ha.token]);
   });
 
+  test("frontend/subscribe_user_data is answered locally with a result and an event", async () => {
+    const { ws, rec } = await wsAuth(h.token);
+    await rec.next();
+    ws.send(JSON.stringify({ id: 1, type: "frontend/subscribe_user_data", key: "sidebar" }));
+    expect(JSON.parse(await rec.next())).toEqual({ id: 1, type: "result", success: true, result: null });
+    expect(JSON.parse(await rec.next())).toEqual({ id: 1, type: "event", event: { value: null } });
+    ws.send(JSON.stringify({ id: 2, type: "unsubscribe_events", subscription: 1 }));
+    expect(JSON.parse(await rec.next())).toEqual({ id: 2, type: "result", success: true, result: null });
+    expect(h.ha.received.map((m) => m.type)).not.toContain("frontend/subscribe_user_data");
+    ws.close();
+    await rec.closed;
+  });
+
   test("guest close closes upstream", async () => {
-    const { ws, rec } = await wsAuth(GUEST_SECRET);
+    const { ws, rec } = await wsAuth(h.token);
     await rec.next();
     ws.close();
     await rec.closed;
@@ -112,7 +124,7 @@ describe("REST", () => {
   test("/api with valid guest bearer: forwarded with real token, guest token stripped", async () => {
     const res = await fetch(new URL("/api/camera_proxy/camera.front", h.proxyUrl), {
       headers: {
-        authorization: `Bearer ${GUEST_SECRET}`,
+        authorization: `Bearer ${h.token}`,
         origin: "http://evil.example",
         "x-forwarded-for": "8.8.8.8",
       },
@@ -129,7 +141,7 @@ describe("REST", () => {
     ["no header", {}],
     ["wrong token", { authorization: "Bearer nope" }],
     ["real HA token", { authorization: "Bearer __REAL__" }],
-    ["basic auth", { authorization: `Basic ${GUEST_SECRET}` }],
+    ["basic auth", { authorization: "Basic abc" }],
   ])("/api without valid guest bearer (%s): 401, HA not contacted", async (_, headers) => {
     const hdrs = { ...headers };
     if (hdrs.authorization === "Bearer __REAL__") hdrs.authorization = `Bearer ${h.ha.token}`;
@@ -139,14 +151,14 @@ describe("REST", () => {
   });
 
   test("frontend root forwarded without any Authorization", async () => {
-    const res = await fetch(new URL("/", h.proxyUrl), { headers: { authorization: `Bearer ${GUEST_SECRET}` } });
+    const res = await fetch(new URL("/", h.proxyUrl), { headers: { authorization: `Bearer ${h.token}` } });
     expect(res.status).toBe(200);
     expect(await res.text()).toContain("HA index");
     expect(h.ha.httpAuth).toEqual([{ path: "/", authorization: null }]);
   });
 
-  test("HA auth pages are not reachable", async () => {
-    const res = await fetch(new URL("/auth/authorize?client_id=x", h.proxyUrl));
+  test("other HA auth pages are not reachable", async () => {
+    const res = await fetch(new URL("/auth/login_flow", h.proxyUrl));
     expect(res.status).toBe(404);
     expect(h.ha.httpAuth).toHaveLength(0);
   });
@@ -157,7 +169,15 @@ describe("REST", () => {
     expect(res.status).toBe(200);
     expect(html).toContain("hassTokens");
     expect(html).not.toContain(h.ha.token);
-    expect(html).not.toContain(GUEST_SECRET);
+    expect(html).not.toContain(h.token);
+    expect(html).not.toContain(h.config.adminSecret);
+  });
+
+  test("/auth/authorize shows the access-ended page", async () => {
+    const res = await fetch(new URL("/auth/authorize?client_id=x", h.proxyUrl));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("ended");
+    expect(h.ha.httpAuth).toHaveLength(0);
   });
 });
 
@@ -170,15 +190,23 @@ describe("/auth/token (handled locally)", () => {
     });
   }
 
-  test("refresh with valid guest credential returns guest credential, never real token", async () => {
-    const res = await post({ grant_type: "refresh_token", refresh_token: GUEST_SECRET, client_id: "x" });
+  test("refresh with a valid token returns it with the remaining lifetime, never the real token", async () => {
+    const res = await post({ grant_type: "refresh_token", refresh_token: h.token, client_id: "x" });
     expect(res.status).toBe(200);
     const text = await res.text();
     expect(text).not.toContain(h.ha.token);
     const body = JSON.parse(text);
-    expect(body.access_token).toBe(GUEST_SECRET);
+    expect(body.access_token).toBe(h.token);
     expect(body.token_type).toBe("Bearer");
+    expect(body.expires_in).toBeGreaterThan(3500);
+    expect(body.expires_in).toBeLessThanOrEqual(3600);
     expect(h.ha.httpAuth).toHaveLength(0);
+  });
+
+  test("refresh for a revoked guest is refused", async () => {
+    h.store.revoke(h.guest.id);
+    const res = await post({ grant_type: "refresh_token", refresh_token: h.token, client_id: "x" });
+    expect(res.status).toBe(400);
   });
 
   test("refresh with invalid credential: 400", async () => {
@@ -193,7 +221,7 @@ describe("/auth/token (handled locally)", () => {
   });
 
   test("revoke: 200 and HA not contacted", async () => {
-    const res = await post({ action: "revoke", token: GUEST_SECRET });
+    const res = await post({ action: "revoke", token: h.token });
     expect(res.status).toBe(200);
     expect(h.ha.httpAuth).toHaveLength(0);
   });
@@ -206,10 +234,10 @@ describe("/auth/token (handled locally)", () => {
 
 describe("LAN-only", () => {
   test("non-LAN peer is refused everywhere, including with valid credentials", async () => {
-    const wan = startHarness("203.0.113.7");
+    const wan = await startHarness("203.0.113.7");
     try {
       const res = await fetch(new URL("/api/camera_proxy/camera.front", wan.proxyUrl), {
-        headers: { authorization: `Bearer ${GUEST_SECRET}` },
+        headers: { authorization: `Bearer ${h.token}` },
       });
       expect(res.status).toBe(403);
       expect((await fetch(new URL("/", wan.proxyUrl))).status).toBe(403);
@@ -225,17 +253,17 @@ describe("LAN-only", () => {
       expect(failed).toBe(true);
       expect(wan.ha.wsConnections).toBe(0);
     } finally {
-      wan.stop();
+      await wan.stop();
     }
   });
 
   test("X-Forwarded-For from a LAN peer cannot change the decision", async () => {
-    const wan = startHarness("203.0.113.7");
+    const wan = await startHarness("203.0.113.7");
     try {
       const res = await fetch(new URL("/", wan.proxyUrl), { headers: { "x-forwarded-for": "192.168.1.1" } });
       expect(res.status).toBe(403);
     } finally {
-      wan.stop();
+      await wan.stop();
     }
   });
 });

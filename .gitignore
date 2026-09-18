@@ -5,6 +5,6 @@ node_modules/
 *.log
 dist/
 .DS_Store
-scope.json
 .playwright-mcp/
-guest-scope.json
+guests.json
+guests.json.tmp

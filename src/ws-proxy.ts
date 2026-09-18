@@ -2,11 +2,11 @@ import type { ServerWebSocket, WebSocketHandler } from "bun";
 import type { Config } from "./config.ts";
 import type { Authenticator, Session } from "./guest-auth.ts";
 import type { Logger } from "./log.ts";
-import { filterOutbound, inspectInbound, SILENT_SUBSCRIPTION } from "./ws-policy.ts";
+import { filterOutbound, inspectInbound, LOCAL_SUBSCRIPTION } from "./ws-policy.ts";
 
-type State = "awaiting_auth" | "connecting" | "relaying" | "closed";
+type State = "awaiting_auth" | "authenticating" | "connecting" | "relaying" | "closed";
 
-const SUBSCRIPTION_KINDS = new Set(["subscribe_entities", "subscribe_events", SILENT_SUBSCRIPTION]);
+const SUBSCRIPTION_KINDS = new Set(["subscribe_entities", "subscribe_events", LOCAL_SUBSCRIPTION]);
 
 export interface GuestSocketData {
   state: State;
@@ -15,9 +15,15 @@ export interface GuestSocketData {
   pending: string[];
   kinds: Map<number, string>;
   unsubscribes: Map<number, number>;
+  expiryTimer: ReturnType<typeof setTimeout> | null;
 }
 
 export type GuestSocket = ServerWebSocket<GuestSocketData>;
+
+export interface GuestBridge {
+  handler: WebSocketHandler<GuestSocketData>;
+  closeSessionsOf(guestId: string): number;
+}
 
 const CLOSE_POLICY_VIOLATION = 1008;
 const CLOSE_INTERNAL_ERROR = 1011;
@@ -29,7 +35,15 @@ function describe(msg: Record<string, unknown>): Record<string, unknown> {
 }
 
 export function initialSocketData(): GuestSocketData {
-  return { state: "awaiting_auth", session: null, upstream: null, pending: [], kinds: new Map(), unsubscribes: new Map() };
+  return {
+    state: "awaiting_auth",
+    session: null,
+    upstream: null,
+    pending: [],
+    kinds: new Map(),
+    unsubscribes: new Map(),
+    expiryTimer: null,
+  };
 }
 
 export function haWebSocketUrl(haUrl: URL): string {
@@ -38,13 +52,35 @@ export function haWebSocketUrl(haUrl: URL): string {
   return ws.toString();
 }
 
-export function createWebSocketHandler(config: Config, auth: Authenticator, log: Logger): WebSocketHandler<GuestSocketData> {
+export function createGuestBridge(config: Config, auth: Authenticator, log: Logger): GuestBridge {
   const upstreamUrl = haWebSocketUrl(config.haUrl);
+  const socketsByGuest = new Map<string, Set<GuestSocket>>();
   let lastSeenHaVersion = "unknown";
+
+  function track(ws: GuestSocket, session: Session): void {
+    let sockets = socketsByGuest.get(session.user.id);
+    if (!sockets) {
+      sockets = new Set();
+      socketsByGuest.set(session.user.id, sockets);
+    }
+    sockets.add(ws);
+    ws.data.expiryTimer = setTimeout(() => closeGuest(ws, CLOSE_POLICY_VIOLATION, "session expired"), session.expiresAt - Date.now());
+  }
+
+  function untrack(ws: GuestSocket): void {
+    if (ws.data.expiryTimer) clearTimeout(ws.data.expiryTimer);
+    ws.data.expiryTimer = null;
+    const guestId = ws.data.session?.user.id;
+    if (guestId === undefined) return;
+    const sockets = socketsByGuest.get(guestId);
+    sockets?.delete(ws);
+    if (sockets?.size === 0) socketsByGuest.delete(guestId);
+  }
 
   function closeGuest(ws: GuestSocket, code: number, reason: string): void {
     if (ws.data.state === "closed") return;
     ws.data.state = "closed";
+    untrack(ws);
     const upstream = ws.data.upstream;
     ws.data.upstream = null;
     ws.data.pending = [];
@@ -84,6 +120,10 @@ export function createWebSocketHandler(config: Config, auth: Authenticator, log:
   }
 
   function relayToUpstream(ws: GuestSocket, session: Session, raw: string): void {
+    if (session.expiresAt <= Date.now()) {
+      closeGuest(ws, CLOSE_POLICY_VIOLATION, "session expired");
+      return;
+    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
@@ -101,6 +141,7 @@ export function createWebSocketHandler(config: Config, auth: Authenticator, log:
         if (decision.kind) ws.data.kinds.set(decision.message.id as number, decision.kind);
         if (decision.message.success === false) log("warn", "ws denied", describe(parsed as Record<string, unknown>));
         ws.send(JSON.stringify(decision.message));
+        for (const event of decision.events ?? []) ws.send(JSON.stringify(event));
         return;
       case "forward": {
         const id = decision.message.id as number;
@@ -166,7 +207,34 @@ export function createWebSocketHandler(config: Config, auth: Authenticator, log:
     };
   }
 
-  return {
+  async function authenticate(ws: GuestSocket, raw: string): Promise<void> {
+    let msg: { type?: unknown; access_token?: unknown };
+    try {
+      msg = JSON.parse(raw);
+    } catch {
+      closeGuest(ws, CLOSE_POLICY_VIOLATION, "invalid message");
+      return;
+    }
+    if (msg.type !== "auth") {
+      closeGuest(ws, CLOSE_POLICY_VIOLATION, "auth required");
+      return;
+    }
+    ws.data.state = "authenticating";
+    const session = await auth.authenticate(msg.access_token);
+    if (ws.data.state !== "authenticating") return;
+    if (!session) {
+      log("warn", "ws guest auth rejected", { ip: ws.remoteAddress });
+      ws.send(JSON.stringify({ type: "auth_invalid", message: "Invalid access token" }));
+      closeGuest(ws, CLOSE_POLICY_VIOLATION, "invalid auth");
+      return;
+    }
+    log("info", "ws guest authenticated", { ip: ws.remoteAddress, guest: session.user.id });
+    ws.data.session = session;
+    track(ws, session);
+    connectUpstream(ws, session);
+  }
+
+  const handler: WebSocketHandler<GuestSocketData> = {
     open(ws) {
       ws.send(JSON.stringify({ type: "auth_required", ha_version: lastSeenHaVersion }));
     },
@@ -177,37 +245,31 @@ export function createWebSocketHandler(config: Config, auth: Authenticator, log:
         closeGuest(ws, CLOSE_POLICY_VIOLATION, "binary frames not allowed");
         return;
       }
-
-      if (ws.data.state === "awaiting_auth") {
-        let msg: { type?: unknown; access_token?: unknown };
-        try {
-          msg = JSON.parse(raw);
-        } catch {
-          closeGuest(ws, CLOSE_POLICY_VIOLATION, "invalid message");
+      switch (ws.data.state) {
+        case "awaiting_auth":
+          void authenticate(ws, raw);
           return;
-        }
-        if (msg.type !== "auth") {
-          closeGuest(ws, CLOSE_POLICY_VIOLATION, "auth required");
+        case "authenticating":
+          closeGuest(ws, CLOSE_POLICY_VIOLATION, "auth in progress");
           return;
-        }
-        const session = auth.authenticate(msg.access_token);
-        if (!session) {
-          log("warn", "ws guest auth rejected", { ip: ws.remoteAddress });
-          ws.send(JSON.stringify({ type: "auth_invalid", message: "Invalid access token" }));
-          closeGuest(ws, CLOSE_POLICY_VIOLATION, "invalid auth");
-          return;
-        }
-        log("info", "ws guest authenticated", { ip: ws.remoteAddress, guest: session.user.id });
-        ws.data.session = session;
-        connectUpstream(ws, session);
-        return;
+        default:
+          relayToUpstream(ws, ws.data.session!, raw);
       }
-
-      relayToUpstream(ws, ws.data.session!, raw);
     },
 
     close(ws) {
       closeGuest(ws, 1000, "guest closed");
+    },
+  };
+
+  return {
+    handler,
+    closeSessionsOf(guestId) {
+      const sockets = socketsByGuest.get(guestId);
+      if (!sockets) return 0;
+      const count = sockets.size;
+      for (const ws of [...sockets]) closeGuest(ws, CLOSE_POLICY_VIOLATION, "access revoked");
+      return count;
     },
   };
 }

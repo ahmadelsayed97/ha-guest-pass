@@ -22,14 +22,13 @@ export const GUEST_PAGE_HTML = `<!doctype html>
     return;
   }
   var session = await res.json();
-  var expiresIn = 1800;
   var tokens = {
     hassUrl: location.origin,
     clientId: location.origin + "/",
     access_token: token,
     refresh_token: token,
-    expires_in: expiresIn,
-    expires: Date.now() + expiresIn * 1000
+    expires_in: Math.floor((session.expiresAt - Date.now()) / 1000),
+    expires: session.expiresAt
   };
   try {
     localStorage.setItem("hassTokens", JSON.stringify(tokens));
@@ -44,3 +43,25 @@ export const GUEST_PAGE_HTML = `<!doctype html>
 </script>
 </body>
 </html>`;
+
+function notice(title: string, text: string): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title}</title>
+<style>body{font-family:system-ui,sans-serif;display:grid;place-items:center;height:100vh;margin:0;background:#111;color:#eee;text-align:center}</style>
+</head>
+<body>
+<div>
+<h1>${title}</h1>
+<p>${text}</p>
+</div>
+<script>try { localStorage.removeItem("hassTokens"); } catch (e) {}</script>
+</body>
+</html>`;
+}
+
+export const ACCESS_ENDED_HTML = notice("This guest access has ended", "Ask your host for a new link.");
+export const NOT_AVAILABLE_HTML = notice("This page is not available to guests", "If your access has ended, ask your host for a new link.");

@@ -1,15 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { authenticatedSocket, GUEST_SECRET, startHarness, type Harness } from "./helpers.ts";
+import { authenticatedSocket, opened, recordSocket, startHarness, type Harness } from "./helpers.ts";
 
 let h: Harness;
-beforeEach(() => {
-  h = startHarness();
+beforeEach(async () => {
+  h = await startHarness();
 });
-afterEach(() => {
-  h.stop();
-});
+afterEach(() => h.stop());
 
-const authed = () => ({ headers: { authorization: `Bearer ${GUEST_SECRET}` } });
+const authed = () => ({ headers: { authorization: `Bearer ${h.token}` } });
 
 describe("WebSocket enforcement", () => {
   test("get_states returns only scoped entities", async () => {
@@ -116,13 +114,49 @@ describe("WebSocket enforcement", () => {
     ws.close();
   });
 
-  test("auth/current_user never reaches HA and reports a non-admin", async () => {
+  test("auth/current_user never reaches HA and reports the guest as non-admin", async () => {
     const { ws, rec } = await authenticatedSocket(h);
     ws.send(JSON.stringify({ id: 1, type: "auth/current_user" }));
     const result = JSON.parse(await rec.next());
-    expect(result.result.is_admin).toBe(false);
+    expect(result.result).toMatchObject({ id: h.guest.id, name: "Guest", is_admin: false });
     expect(h.ha.received).toHaveLength(0);
     ws.close();
+  });
+
+  test("revoking a guest closes its open sockets", async () => {
+    const { rec } = await authenticatedSocket(h);
+    const res = await fetch(new URL(`/admin/api/guests/${h.guest.id}`, h.proxyUrl), {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${h.config.adminSecret}` },
+    });
+    expect(res.status).toBe(200);
+    expect((await rec.closed).code).toBe(1008);
+  });
+
+  test("a session is closed when its expiry passes", async () => {
+    const short = await startHarness("192.168.1.50", 300);
+    try {
+      const { rec } = await authenticatedSocket(short);
+      expect((await rec.closed).code).toBe(1008);
+    } finally {
+      await short.stop();
+    }
+  });
+
+  test("an expired token cannot open a socket", async () => {
+    const short = await startHarness("192.168.1.50", 50);
+    try {
+      await Bun.sleep(60);
+      const ws = new WebSocket(short.wsUrl);
+      const rec = recordSocket(ws);
+      await opened(ws);
+      await rec.next();
+      ws.send(JSON.stringify({ type: "auth", access_token: short.token }));
+      expect(JSON.parse(await rec.next()).type).toBe("auth_invalid");
+      expect(short.ha.wsConnections).toBe(0);
+    } finally {
+      await short.stop();
+    }
   });
 });
 
@@ -131,6 +165,22 @@ describe("HTTP enforcement", () => {
     const res = await fetch(new URL(path, h.proxyUrl), authed());
     expect(res.status).toBe(404);
     expect(h.ha.httpAuth).toHaveLength(0);
+  });
+
+  test("a denied page navigation gets the guest not-available page, still 404", async () => {
+    const res = await fetch(new URL("/lovelace-private", h.proxyUrl), { headers: { accept: "text/html,application/xhtml+xml" } });
+    expect(res.status).toBe(404);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    const body = await res.text();
+    expect(body).toContain("not available");
+    expect(body).toContain("hassTokens");
+    expect(h.ha.httpAuth).toHaveLength(0);
+  });
+
+  test("a denied non-page request stays a plain 404", async () => {
+    const res = await fetch(new URL("/api/states", h.proxyUrl), { headers: { accept: "application/json" } });
+    expect(res.status).toBe(404);
+    expect(res.headers.get("content-type")).not.toContain("text/html");
   });
 
   test("scoped dashboard path is served", async () => {
@@ -161,10 +211,10 @@ describe("HTTP enforcement", () => {
     expect(html).not.toContain("lovelace-guest");
   });
 
-  test("/guest/session describes the guest and its dashboards", async () => {
+  test("/guest/session describes the guest, its dashboards and expiry", async () => {
     const res = await fetch(new URL("/guest/session", h.proxyUrl), authed());
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ name: "Guest", dashboards: ["lovelace-guest"] });
+    expect(await res.json()).toEqual({ name: "Guest", dashboards: ["lovelace-guest"], expiresAt: h.guest.expiresAt });
     expect(h.ha.httpAuth).toHaveLength(0);
   });
 

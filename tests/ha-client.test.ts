@@ -12,7 +12,7 @@ afterEach(() => {
 });
 
 const configFor = (token: string) =>
-  loadConfig({ HA_URL: ha.url.toString(), HA_TOKEN: token, GUEST_SECRET: "x".repeat(32), GUEST_SCOPE_FILE: "s.json" });
+  loadConfig({ HA_URL: ha.url.toString(), HA_TOKEN: token, SIGNING_KEY: "22".repeat(32), ADMIN_SECRET: "x".repeat(32), GUEST_STORE_FILE: "g.json" });
 
 describe("HAClient", () => {
   test("authenticates with the real token and answers calls", async () => {

@@ -1,5 +1,0 @@
-{
-  "dashboards": ["lovelace-guest"],
-  "areas": { "living_room": "control", "guest_bedroom": "view" },
-  "entities": { "lock.front_door": "control", "switch.living_room_heater": "none" }
-}

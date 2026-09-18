@@ -1,49 +1,69 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Config } from "../src/config.ts";
 import { loadConfig } from "../src/config.ts";
-import { sharedSecretAuthenticator } from "../src/guest-auth.ts";
+import { tokenAuthenticator } from "../src/guest-auth.ts";
+import { GuestStore, type Guest } from "../src/guest-store.ts";
 import { silentLogger } from "../src/log.ts";
-import { parseScope, type Scope } from "../src/scope.ts";
 import { createServer } from "../src/server.ts";
+import { signGuestToken } from "../src/token.ts";
 import { startFakeHA, type FakeHA } from "./fake-ha.ts";
 
-export const GUEST_SECRET = "guest-secret-0123456789-0123456789-abcdef";
+export const ADMIN_SECRET = "admin-secret-0123456789-0123456789-abcdef";
+const SIGNING_KEY_HEX = "11".repeat(32);
 
+export const TEST_DEFINITION = {
+  dashboards: ["lovelace-guest"],
+  areas: {},
+  entities: { "light.kitchen": "control" as const, "sensor.temp": "view" as const, "camera.front": "view" as const },
+};
 export const TEST_SCOPE = {
   dashboards: ["lovelace-guest"],
-  entities: { "light.kitchen": "control", "sensor.temp": "view", "camera.front": "view" },
+  entities: { "light.kitchen": "control" as const, "sensor.temp": "view" as const, "camera.front": "view" as const },
 };
 
 export interface Harness {
   ha: FakeHA;
   config: Config;
-  scope: Scope;
+  store: GuestStore;
+  guest: Guest;
+  token: string;
   proxyUrl: URL;
   wsUrl: string;
-  stop(): void;
+  stop(): Promise<void>;
 }
 
-export function startHarness(peerIp = "192.168.1.50", scopeInput: unknown = TEST_SCOPE): Harness {
+export async function startHarness(peerIp = "192.168.1.50", expiresIn = 3600_000): Promise<Harness> {
   const ha = startFakeHA();
-  const scope = parseScope(scopeInput);
+  const dir = mkdtempSync(join(tmpdir(), "harness-"));
   const config = loadConfig({
     HA_URL: ha.url.toString(),
     HA_TOKEN: ha.token,
-    GUEST_SECRET,
-    GUEST_SCOPE_FILE: "unused-in-tests.json",
+    SIGNING_KEY: SIGNING_KEY_HEX,
+    ADMIN_SECRET,
+    GUEST_STORE_FILE: join(dir, "guests.json"),
     HOST: "127.0.0.1",
   });
-  const auth = sharedSecretAuthenticator(GUEST_SECRET, scope);
-  const proxy = createServer(config, auth, { log: silentLogger, port: 0, requestIP: () => peerIp });
+  const store = await GuestStore.open(config.guestStoreFile);
+  const guest = store.create({ name: "Guest", expiresAt: Date.now() + expiresIn, definition: TEST_DEFINITION, scope: TEST_SCOPE });
+  const token = await signGuestToken({ guestId: guest.id, tokenId: guest.tokenId, expiresAt: guest.expiresAt }, config.signingKey);
+  const auth = tokenAuthenticator(store, config.signingKey);
+  const proxy = createServer(config, { auth, store }, { log: silentLogger, port: 0, requestIP: () => peerIp });
   const proxyUrl = new URL(`http://127.0.0.1:${proxy.port}`);
   return {
     ha,
     config,
-    scope,
+    store,
+    guest,
+    token,
     proxyUrl,
     wsUrl: `ws://127.0.0.1:${proxy.port}/api/websocket`,
-    stop() {
+    async stop() {
       proxy.stop(true);
       ha.stop();
+      await store.flush();
+      rmSync(dir, { recursive: true, force: true });
     },
   };
 }
@@ -84,7 +104,7 @@ export async function authenticatedSocket(h: Harness): Promise<{ ws: WebSocket; 
   const rec = recordSocket(ws);
   await opened(ws);
   await rec.next();
-  ws.send(JSON.stringify({ type: "auth", access_token: GUEST_SECRET }));
+  ws.send(JSON.stringify({ type: "auth", access_token: h.token }));
   await rec.next();
   return { ws, rec };
 }

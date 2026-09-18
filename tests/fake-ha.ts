@@ -9,6 +9,7 @@ export interface FakeHA {
   wsAuthTokens: string[];
   wsConnections: number;
   received: Array<Record<string, unknown>>;
+  dashboards: Array<{ url_path: string }>;
   httpAuth: Array<{ path: string; authorization: string | null }>;
   broadcast(frame: string): void;
   stop(): void;
@@ -29,6 +30,7 @@ export function startFakeHA(token = "REAL-HA-TOKEN-" + crypto.randomUUID()): Fak
     wsAuthTokens: [] as string[],
     wsConnections: 0,
     received: [] as Array<Record<string, unknown>>,
+    dashboards: [] as Array<{ url_path: string }>,
     httpAuth: [] as Array<{ path: string; authorization: string | null }>,
   };
 
@@ -105,6 +107,9 @@ export function startFakeHA(token = "REAL-HA-TOKEN-" + crypto.randomUUID()): Fak
               { entity_id: "light.kitchen", area_id: "kitchen", device_id: null, disabled_by: null, hidden_by: null, entity_category: null },
               { entity_id: "sensor.temp", area_id: null, device_id: "dev-1", disabled_by: null, hidden_by: null, entity_category: null },
             ]);
+            return;
+          case "lovelace/dashboards/list":
+            result(state.dashboards);
             return;
           case "fail/please":
             ws.send(JSON.stringify({ id: msg.id, type: "result", success: false, error: { code: "boom", message: "nope" } }));

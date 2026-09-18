@@ -9,12 +9,19 @@ export const GUEST_PAGE_HTML = `<!doctype html>
 <body>
 <p id="msg">Signing you in…</p>
 <script>
-(function () {
+(async function () {
+  var msg = document.getElementById("msg");
   var token = location.hash.replace(/^#/, "");
   if (!token) {
-    document.getElementById("msg").textContent = "This guest link is missing its access code.";
+    msg.textContent = "This guest link is missing its access code.";
     return;
   }
+  var res = await fetch("/guest/session", { headers: { authorization: "Bearer " + token } });
+  if (!res.ok) {
+    msg.textContent = "This guest link is not valid or has expired.";
+    return;
+  }
+  var session = await res.json();
   var expiresIn = 1800;
   var tokens = {
     hassUrl: location.origin,
@@ -26,8 +33,9 @@ export const GUEST_PAGE_HTML = `<!doctype html>
   };
   try {
     localStorage.setItem("hassTokens", JSON.stringify(tokens));
+    if (session.dashboards[0]) localStorage.setItem("defaultPanel", JSON.stringify(session.dashboards[0]));
   } catch (e) {
-    document.getElementById("msg").textContent = "Browser storage is unavailable; cannot sign in.";
+    msg.textContent = "Browser storage is unavailable; cannot sign in.";
     return;
   }
   history.replaceState(null, "", "/guest");

@@ -5,3 +5,5 @@ node_modules/
 *.log
 dist/
 .DS_Store
+scope.json
+.playwright-mcp/

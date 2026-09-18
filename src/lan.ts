@@ -12,7 +12,7 @@ export function isLanAddress(address: string | null | undefined): boolean {
   return isLanIPv4(ip);
 }
 
-function parseIPv4(ip: string): number[] | null {
+function parseIPv4(ip: string): [number, number] | null {
   const parts = ip.split(".");
   if (parts.length !== 4) return null;
   const octets: number[] = [];
@@ -22,13 +22,13 @@ function parseIPv4(ip: string): number[] | null {
     if (n > 255) return null;
     octets.push(n);
   }
-  return octets;
+  return [octets[0]!, octets[1]!];
 }
 
 function isLanIPv4(ip: string): boolean {
-  const o = parseIPv4(ip);
-  if (!o) return false;
-  const [a, b] = o as [number, number, number, number];
+  const octets = parseIPv4(ip);
+  if (!octets) return false;
+  const [a, b] = octets;
   if (a === 10) return true;
   if (a === 172 && b >= 16 && b <= 31) return true;
   if (a === 192 && b === 168) return true;

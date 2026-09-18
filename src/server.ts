@@ -1,7 +1,8 @@
 import type { Server } from "bun";
 import type { Config } from "./config.ts";
-import { bearerToken, isValidGuestToken } from "./guest-auth.ts";
+import { bearerToken, type Authenticator, type Session } from "./guest-auth.ts";
 import { GUEST_PAGE_HTML } from "./guest-page.ts";
+import { classifyRequest } from "./http-policy.ts";
 import { forwardToHA } from "./http-proxy.ts";
 import { isLanAddress } from "./lan.ts";
 import { consoleLogger, type Logger } from "./log.ts";
@@ -19,10 +20,19 @@ function json(body: unknown, status = 200): Response {
   return Response.json(body, { status });
 }
 
-export function createServer(config: Config, opts: ServerOptions = {}): Server<GuestSocketData> {
+function notFound(): Response {
+  return new Response("Not found", { status: 404 });
+}
+
+export function createServer(config: Config, auth: Authenticator, opts: ServerOptions = {}): Server<GuestSocketData> {
   const log = opts.log ?? consoleLogger;
   const requestIP = opts.requestIP ?? ((req, server) => server.requestIP(req)?.address ?? null);
-  const websocket = createWebSocketHandler(config, log);
+  const websocket = createWebSocketHandler(config, auth, log);
+  const isDashboard = (urlPath: string) => auth.dashboards().includes(urlPath);
+
+  function sessionFor(req: Request): Session | null {
+    return auth.authenticate(bearerToken(req.headers.get("authorization")));
+  }
 
   async function handleAuthToken(req: Request): Promise<Response> {
     if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
@@ -32,17 +42,17 @@ export function createServer(config: Config, opts: ServerOptions = {}): Server<G
     } catch {
       return json({ error: "invalid_request" }, 400);
     }
-    if (form.get("action") === "revoke") {
-      return new Response(null, { status: 200 });
-    }
+    if (form.get("action") === "revoke") return new Response(null, { status: 200 });
     if (form.get("grant_type") !== "refresh_token") return json({ error: "unsupported_grant_type" }, 400);
     const refreshToken = form.get("refresh_token");
-    if (!isValidGuestToken(refreshToken, config.guestSecret)) return json({ error: "invalid_grant" }, 400);
-    return json({
-      access_token: refreshToken,
-      token_type: "Bearer",
-      expires_in: ACCESS_TOKEN_LIFETIME_SECONDS,
-    });
+    if (!auth.authenticate(refreshToken)) return json({ error: "invalid_grant" }, 400);
+    return json({ access_token: refreshToken, token_type: "Bearer", expires_in: ACCESS_TOKEN_LIFETIME_SECONDS });
+  }
+
+  function handleGuestSession(req: Request): Response {
+    const session = sessionFor(req);
+    if (!session) return json({ message: "Unauthorized" }, 401);
+    return json({ name: session.user.name, dashboards: session.scope.dashboards() });
   }
 
   return Bun.serve<GuestSocketData>({
@@ -56,38 +66,36 @@ export function createServer(config: Config, opts: ServerOptions = {}): Server<G
         return new Response("Forbidden", { status: 403 });
       }
 
-      const url = new URL(req.url);
-      const path = url.pathname;
+      const path = new URL(req.url).pathname;
 
       if (path === "/guest") {
         return new Response(GUEST_PAGE_HTML, {
           headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
         });
       }
-
+      if (path === "/guest/session") return handleGuestSession(req);
       if (path === "/auth/token") return handleAuthToken(req);
-      if (path.startsWith("/auth/")) {
-        return new Response("Not found", { status: 404 });
-      }
-
       if (path === "/api/websocket") {
-        const upgraded = server.upgrade(req, { data: initialSocketData() });
-        if (upgraded) return undefined;
-        return new Response("WebSocket upgrade required", { status: 426 });
+        return server.upgrade(req, { data: initialSocketData() }) ? undefined : new Response("Upgrade required", { status: 426 });
       }
 
-      if (path === "/api" || path.startsWith("/api/")) {
-        const presented = bearerToken(req.headers.get("authorization"));
-        if (!isValidGuestToken(presented, config.guestSecret)) {
-          log("warn", "rest guest auth rejected", { method: req.method, path });
-          return json({ message: "Unauthorized" }, 401);
-        }
-        log("info", "rest forward", { method: req.method, path });
-        return forwardToHA(req, config, { withToken: true });
+      const kind = classifyRequest(req.method, path, isDashboard);
+      if (kind === "static") return forwardToHA(req, config, { withToken: false });
+      if (kind === "deny") {
+        log("warn", "rest denied", { method: req.method, path });
+        return notFound();
       }
 
-      log("info", "static forward", { method: req.method, path });
-      return forwardToHA(req, config, { withToken: false });
+      const session = sessionFor(req);
+      if (!session) {
+        log("warn", "rest guest auth rejected", { method: req.method, path });
+        return json({ message: "Unauthorized" }, 401);
+      }
+      if (!session.scope.canView(kind.entityId)) {
+        log("warn", "rest denied", { method: req.method, path });
+        return notFound();
+      }
+      return forwardToHA(req, config, { withToken: true });
     },
   });
 }

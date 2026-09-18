@@ -28,6 +28,9 @@ const HOP_BY_HOP_RESPONSE_HEADERS = ["connection", "keep-alive", "transfer-encod
 
 const DECODED_BODY_HEADERS = ["content-encoding", "content-length"];
 
+const STRIPPED_REQUEST_HEADERS = [...HOP_BY_HOP_REQUEST_HEADERS, ...GUEST_IDENTITY_HEADERS];
+const STRIPPED_RESPONSE_HEADERS = [...HOP_BY_HOP_RESPONSE_HEADERS, ...DECODED_BODY_HEADERS];
+
 export interface ForwardOptions {
   withToken: boolean;
 }
@@ -37,7 +40,7 @@ export async function forwardToHA(req: Request, config: Config, opts: ForwardOpt
   const target = new URL(incoming.pathname + incoming.search, config.haUrl);
 
   const headers = new Headers(req.headers);
-  for (const name of [...HOP_BY_HOP_REQUEST_HEADERS, ...GUEST_IDENTITY_HEADERS]) headers.delete(name);
+  for (const name of STRIPPED_REQUEST_HEADERS) headers.delete(name);
   if (opts.withToken) headers.set("authorization", `Bearer ${config.haToken}`);
 
   const hasBody = req.method !== "GET" && req.method !== "HEAD";
@@ -54,6 +57,6 @@ export async function forwardToHA(req: Request, config: Config, opts: ForwardOpt
   }
 
   const responseHeaders = new Headers(upstream.headers);
-  for (const name of [...HOP_BY_HOP_RESPONSE_HEADERS, ...DECODED_BODY_HEADERS]) responseHeaders.delete(name);
+  for (const name of STRIPPED_RESPONSE_HEADERS) responseHeaders.delete(name);
   return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
 }

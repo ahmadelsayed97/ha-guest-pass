@@ -25,10 +25,8 @@ describe("WebSocket bridge", () => {
     const authOk = JSON.parse(await rec.next());
     expect(authOk).toEqual({ type: "auth_ok", ha_version: h.ha.haVersion });
 
-    ws.send(JSON.stringify({ id: 1, type: "get_states" }));
-    const result = JSON.parse(await rec.next());
-    expect(result.id).toBe(1);
-    expect(result.result.echo.type).toBe("get_states");
+    ws.send(JSON.stringify({ id: 1, type: "ping" }));
+    expect(JSON.parse(await rec.next())).toEqual({ id: 1, type: "pong" });
 
     expect(h.ha.wsConnections).toBe(1);
     expect(h.ha.wsAuthTokens).toEqual([h.ha.token]);
@@ -59,7 +57,7 @@ describe("WebSocket bridge", () => {
     const rec = recordSocket(ws);
     await opened(ws);
     await rec.next();
-    ws.send(JSON.stringify({ id: 1, type: "get_states" }));
+    ws.send(JSON.stringify({ id: 1, type: "ping" }));
     const closed = await rec.closed;
     expect(closed.code).toBe(1008);
     expect(h.ha.wsConnections).toBe(0);
@@ -112,7 +110,7 @@ describe("WebSocket bridge", () => {
 
 describe("REST", () => {
   test("/api with valid guest bearer: forwarded with real token, guest token stripped", async () => {
-    const res = await fetch(new URL("/api/states", h.proxyUrl), {
+    const res = await fetch(new URL("/api/camera_proxy/camera.front", h.proxyUrl), {
       headers: {
         authorization: `Bearer ${GUEST_SECRET}`,
         origin: "http://evil.example",
@@ -121,10 +119,10 @@ describe("REST", () => {
     });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.path).toBe("/api/states");
+    expect(body.path).toBe("/api/camera_proxy/camera.front");
     expect(body.origin).toBeNull();
     expect(body.xff).toBeNull();
-    expect(h.ha.httpAuth).toEqual([{ path: "/api/states", authorization: `Bearer ${h.ha.token}` }]);
+    expect(h.ha.httpAuth).toEqual([{ path: "/api/camera_proxy/camera.front", authorization: `Bearer ${h.ha.token}` }]);
   });
 
   test.each([
@@ -135,7 +133,7 @@ describe("REST", () => {
   ])("/api without valid guest bearer (%s): 401, HA not contacted", async (_, headers) => {
     const hdrs = { ...headers };
     if (hdrs.authorization === "Bearer __REAL__") hdrs.authorization = `Bearer ${h.ha.token}`;
-    const res = await fetch(new URL("/api/states", h.proxyUrl), { headers: hdrs });
+    const res = await fetch(new URL("/api/camera_proxy/camera.front", h.proxyUrl), { headers: hdrs });
     expect(res.status).toBe(401);
     expect(h.ha.httpAuth).toHaveLength(0);
   });
@@ -210,7 +208,7 @@ describe("LAN-only", () => {
   test("non-LAN peer is refused everywhere, including with valid credentials", async () => {
     const wan = startHarness("203.0.113.7");
     try {
-      const res = await fetch(new URL("/api/states", wan.proxyUrl), {
+      const res = await fetch(new URL("/api/camera_proxy/camera.front", wan.proxyUrl), {
         headers: { authorization: `Bearer ${GUEST_SECRET}` },
       });
       expect(res.status).toBe(403);

@@ -1,14 +1,20 @@
 import type { ServerWebSocket, WebSocketHandler } from "bun";
 import type { Config } from "./config.ts";
-import { isValidGuestToken } from "./guest-auth.ts";
+import type { Authenticator, Session } from "./guest-auth.ts";
 import type { Logger } from "./log.ts";
+import { filterOutbound, inspectInbound, SILENT_SUBSCRIPTION } from "./ws-policy.ts";
 
 type State = "awaiting_auth" | "connecting" | "relaying" | "closed";
 
+const SUBSCRIPTION_KINDS = new Set(["subscribe_entities", "subscribe_events", SILENT_SUBSCRIPTION]);
+
 export interface GuestSocketData {
   state: State;
+  session: Session | null;
   upstream: WebSocket | null;
   pending: string[];
+  kinds: Map<number, string>;
+  unsubscribes: Map<number, number>;
 }
 
 export type GuestSocket = ServerWebSocket<GuestSocketData>;
@@ -16,8 +22,14 @@ export type GuestSocket = ServerWebSocket<GuestSocketData>;
 const CLOSE_POLICY_VIOLATION = 1008;
 const CLOSE_INTERNAL_ERROR = 1011;
 
+function describe(msg: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of ["type", "event_type", "domain", "service"]) if (typeof msg[key] === "string") out[key] = msg[key];
+  return out;
+}
+
 export function initialSocketData(): GuestSocketData {
-  return { state: "awaiting_auth", upstream: null, pending: [] };
+  return { state: "awaiting_auth", session: null, upstream: null, pending: [], kinds: new Map(), unsubscribes: new Map() };
 }
 
 export function haWebSocketUrl(haUrl: URL): string {
@@ -26,7 +38,7 @@ export function haWebSocketUrl(haUrl: URL): string {
   return ws.toString();
 }
 
-export function createWebSocketHandler(config: Config, log: Logger): WebSocketHandler<GuestSocketData> {
+export function createWebSocketHandler(config: Config, auth: Authenticator, log: Logger): WebSocketHandler<GuestSocketData> {
   const upstreamUrl = haWebSocketUrl(config.haUrl);
   let lastSeenHaVersion = "unknown";
 
@@ -40,7 +52,68 @@ export function createWebSocketHandler(config: Config, log: Logger): WebSocketHa
     ws.close(code, reason);
   }
 
-  function connectUpstream(ws: GuestSocket): void {
+  function relayFromUpstream(ws: GuestSocket, session: Session, frame: string): void {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(frame);
+    } catch {
+      closeGuest(ws, CLOSE_INTERNAL_ERROR, "bad upstream frame");
+      return;
+    }
+    if (Array.isArray(parsed)) {
+      closeGuest(ws, CLOSE_INTERNAL_ERROR, "coalesced upstream frame");
+      return;
+    }
+    const message = filterOutbound(parsed, session, (id) => ws.data.kinds.get(id));
+    if (!message) return;
+    ws.send(JSON.stringify(message));
+    forgetCompleted(ws.data, message);
+  }
+
+  function forgetCompleted(data: GuestSocketData, message: Record<string, unknown>): void {
+    if (message.type !== "result") return;
+    const id = message.id as number;
+    const kind = data.kinds.get(id);
+    if (kind === "unsubscribe_events") {
+      const subscription = data.unsubscribes.get(id);
+      if (subscription !== undefined) data.kinds.delete(subscription);
+      data.unsubscribes.delete(id);
+    }
+    if (kind === undefined || SUBSCRIPTION_KINDS.has(kind)) return;
+    data.kinds.delete(id);
+  }
+
+  function relayToUpstream(ws: GuestSocket, session: Session, raw: string): void {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      closeGuest(ws, CLOSE_POLICY_VIOLATION, "invalid message");
+      return;
+    }
+    const kindOf = (id: number) => ws.data.kinds.get(id);
+    const decision = inspectInbound(parsed, session, kindOf);
+    switch (decision.action) {
+      case "close":
+        closeGuest(ws, CLOSE_POLICY_VIOLATION, "invalid message");
+        return;
+      case "reply":
+        if (decision.kind) ws.data.kinds.set(decision.message.id as number, decision.kind);
+        if (decision.message.success === false) log("warn", "ws denied", describe(parsed as Record<string, unknown>));
+        ws.send(JSON.stringify(decision.message));
+        return;
+      case "forward": {
+        const id = decision.message.id as number;
+        ws.data.kinds.set(id, decision.kind);
+        if (decision.kind === "unsubscribe_events") ws.data.unsubscribes.set(id, decision.message.subscription as number);
+        const frame = JSON.stringify(decision.message);
+        if (ws.data.state === "connecting") ws.data.pending.push(frame);
+        else ws.data.upstream?.send(frame);
+      }
+    }
+  }
+
+  function connectUpstream(ws: GuestSocket, session: Session): void {
     ws.data.state = "connecting";
     const upstream = new WebSocket(upstreamUrl);
     ws.data.upstream = upstream;
@@ -54,7 +127,7 @@ export function createWebSocketHandler(config: Config, log: Logger): WebSocketHa
         return;
       }
       if (upstreamAuthed) {
-        ws.send(event.data);
+        relayFromUpstream(ws, session, event.data);
         return;
       }
       let msg: { type?: unknown; ha_version?: unknown };
@@ -117,39 +190,24 @@ export function createWebSocketHandler(config: Config, log: Logger): WebSocketHa
           closeGuest(ws, CLOSE_POLICY_VIOLATION, "auth required");
           return;
         }
-        if (!isValidGuestToken(msg.access_token, config.guestSecret)) {
+        const session = auth.authenticate(msg.access_token);
+        if (!session) {
           log("warn", "ws guest auth rejected", { ip: ws.remoteAddress });
           ws.send(JSON.stringify({ type: "auth_invalid", message: "Invalid access token" }));
           closeGuest(ws, CLOSE_POLICY_VIOLATION, "invalid auth");
           return;
         }
-        log("info", "ws guest authenticated", { ip: ws.remoteAddress });
-        connectUpstream(ws);
+        log("info", "ws guest authenticated", { ip: ws.remoteAddress, guest: session.user.id });
+        ws.data.session = session;
+        connectUpstream(ws, session);
         return;
       }
 
-      if (isAuthFrame(raw)) {
-        closeGuest(ws, CLOSE_POLICY_VIOLATION, "unexpected auth");
-        return;
-      }
-      if (ws.data.state === "connecting") {
-        ws.data.pending.push(raw);
-        return;
-      }
-      ws.data.upstream?.send(raw);
+      relayToUpstream(ws, ws.data.session!, raw);
     },
 
     close(ws) {
       closeGuest(ws, 1000, "guest closed");
     },
   };
-}
-
-function isAuthFrame(raw: string): boolean {
-  try {
-    const msg = JSON.parse(raw);
-    return typeof msg === "object" && msg !== null && msg.type === "auth";
-  } catch {
-    return true;
-  }
 }

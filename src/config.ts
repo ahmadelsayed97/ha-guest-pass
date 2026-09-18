@@ -2,6 +2,7 @@ export interface Config {
   haUrl: URL;
   readonly haToken: string;
   readonly guestSecret: string;
+  scopeFile: string;
   host: string;
   port: number;
 }
@@ -24,10 +25,11 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   if (guestSecret.length < MIN_SECRET_LENGTH) {
     throw new Error(`GUEST_SECRET must be at least ${MIN_SECRET_LENGTH} characters`);
   }
+  const scopeFile = required(env, "GUEST_SCOPE_FILE");
   const port = Number(env.PORT ?? "8124");
   if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Error("PORT must be 1-65535");
 
-  const config = { haUrl, host: env.HOST ?? "0.0.0.0", port } as Config;
+  const config = { haUrl, scopeFile, host: env.HOST ?? "0.0.0.0", port } as Config;
   Object.defineProperty(config, "haToken", { value: haToken, enumerable: false, writable: false });
   Object.defineProperty(config, "guestSecret", { value: guestSecret, enumerable: false, writable: false });
   return config;

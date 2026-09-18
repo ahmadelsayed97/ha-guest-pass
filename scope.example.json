@@ -1,0 +1,7 @@
+{
+  "dashboards": ["lovelace-guest"],
+  "entities": {
+    "light.living_room": "control",
+    "sensor.outdoor_temperature": "view"
+  }
+}

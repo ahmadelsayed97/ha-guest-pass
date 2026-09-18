@@ -5,6 +5,7 @@ const base = {
   HA_URL: "http://ha.local:8123",
   HA_TOKEN: "real-token",
   GUEST_SECRET: "0123456789abcdef0123456789abcdef",
+  GUEST_SCOPE_FILE: "./scope.json",
 };
 
 describe("loadConfig", () => {
@@ -26,6 +27,7 @@ describe("loadConfig", () => {
     [{ ...base, HA_URL: undefined }, "missing HA_URL"],
     [{ ...base, HA_TOKEN: " " }, "blank HA_TOKEN"],
     [{ ...base, GUEST_SECRET: "short" }, "short GUEST_SECRET"],
+    [{ ...base, GUEST_SCOPE_FILE: "" }, "missing GUEST_SCOPE_FILE"],
     [{ ...base, HA_URL: "ftp://x" }, "bad scheme"],
     [{ ...base, PORT: "99999" }, "bad port"],
   ])("rejects %p (%s)", (env) => {

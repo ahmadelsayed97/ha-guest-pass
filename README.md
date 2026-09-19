@@ -10,11 +10,23 @@ entities you picked. Anything else is refused before it reaches HA. See
 
 ## Running
 
+As a Home Assistant add-on (HA OS or Supervised): Settings, Add-ons, Add-on
+store, Repositories, add `https://github.com/ahmadelsayed97/ha-guest-pass`,
+install HA Guest Pass, paste a long-lived token and an admin secret into its
+configuration, start it. The add-on runs on the host network so it sees real
+client addresses, which the LAN check and the lockout depend on. Guest records
+and the signing key live in its data directory. Details in `addon/DOCS.md`.
+
+Anywhere else:
+
 ```sh
 cp .env.example .env   # fill in HA_URL, HA_TOKEN, SIGNING_KEY, ADMIN_SECRET
 bun install
 bun run dev
 ```
+
+or build the `Dockerfile` and run it with `--network host` and the same
+variables, mounting a volume at `/data`.
 
 Open `http://<proxy-host>:8124/admin` from the LAN, enter the admin secret,
 and create a guest: name, how long, which dashboards, which areas at view or

@@ -1,0 +1,20 @@
+name: HA Guest Pass
+version: "0.1.0"
+slug: ha_guest_pass
+description: Scoped, temporary, password-free guest access to your dashboards
+url: https://github.com/ahmadelsayed97/ha-guest-pass
+arch:
+  - amd64
+  - aarch64
+image: ghcr.io/ahmadelsayed97/ha-guest-pass-{arch}
+startup: services
+host_network: true
+watchdog: http://[HOST]:8124/health
+options:
+  ha_url: http://127.0.0.1:8123
+  ha_token: ""
+  admin_secret: ""
+schema:
+  ha_url: url
+  ha_token: password
+  admin_secret: password

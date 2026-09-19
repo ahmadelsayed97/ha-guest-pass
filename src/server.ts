@@ -131,6 +131,7 @@ export function createServer(config: Config, deps: ServerDeps, opts: ServerOptio
 
       const path = new URL(req.url).pathname;
 
+      if (path === "/health") return json({ status: "ok" });
       if (path === "/guest") return html(GUEST_PAGE_HTML);
       if (path === EXPIRY_SCRIPT_PATH) return javascript(EXPIRY_SCRIPT);
       if (path === "/guest/session") return handleGuestSession(req, ip);

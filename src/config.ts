@@ -1,3 +1,5 @@
+export type Env = Record<string, string | undefined>;
+
 export interface Config {
   haUrl: URL;
   readonly haToken: string;
@@ -11,7 +13,7 @@ export interface Config {
 const MIN_SECRET_LENGTH = 32;
 const SIGNING_KEY_BYTES = 32;
 
-function required(env: Record<string, string | undefined>, key: string): string {
+function required(env: Env, key: string): string {
   const value = env[key]?.trim();
   if (!value) throw new Error(`Missing required environment variable ${key}`);
   return value;
@@ -21,7 +23,7 @@ function hidden(target: object, key: string, value: unknown): void {
   Object.defineProperty(target, key, { value, enumerable: false, writable: false });
 }
 
-export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
+export function loadConfig(env: Env = process.env): Config {
   const haUrl = new URL(required(env, "HA_URL"));
   if (haUrl.protocol !== "http:" && haUrl.protocol !== "https:") throw new Error("HA_URL must be http:// or https://");
   const haToken = required(env, "HA_TOKEN");

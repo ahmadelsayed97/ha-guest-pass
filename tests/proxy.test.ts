@@ -180,6 +180,13 @@ describe("REST", () => {
     expect(h.ha.httpAuth).toEqual([{ path: "/", authorization: null }]);
   });
 
+  test("/health answers without credentials and without contacting HA", async () => {
+    const res = await fetch(new URL("/health", h.proxyUrl));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: "ok" });
+    expect(h.ha.httpAuth).toHaveLength(0);
+  });
+
   test("HTML pages from HA carry the guest expiry script", async () => {
     const res = await fetch(new URL("/", h.proxyUrl));
     const body = await res.text();

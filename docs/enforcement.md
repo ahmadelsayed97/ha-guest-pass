@@ -19,6 +19,13 @@ An override grants any level to any entity, or `none` to remove one.
 The admin page and API under `/admin` need `ADMIN_SECRET` as a bearer token.
 The admin secret is not a guest credential and vice versa.
 
+Failed credential checks are counted per source address. Ten bad admin secrets
+in five minutes, or twenty bad guest tokens in a minute, and that address gets
+429 with `Retry-After` until the window ends; a WebSocket from it is closed
+before the token is looked at. Only failures count and a success clears the
+count, so a guest browsing normally never trips it. The admin page itself
+still loads, so a locked out address can read why.
+
 ## WebSocket, guest to HA
 
 Forwarded as-is: `ping`, `unsubscribe_events`, `lovelace/resources`,

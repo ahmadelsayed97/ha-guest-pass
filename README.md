@@ -36,7 +36,8 @@ is enforced by the proxy. The proxy verifies the token on every `/api` request
 and on the WebSocket `auth` message, looks up the guest record, and swaps in
 the real token before talking to HA. HA's `/auth/token` endpoint is answered by
 the proxy; the rest of `/auth` is blocked. Requests from outside the LAN get a
-403 based on the socket address, not headers.
+403 based on the socket address, not headers. Addresses that keep failing a
+credential check are locked out for a few minutes.
 
 On the WebSocket, each message from the guest is checked against an allowlist
 of types and rewritten before forwarding, and each message from HA is filtered

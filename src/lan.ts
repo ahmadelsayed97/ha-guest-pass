@@ -1,4 +1,4 @@
-export function isLanAddress(address: string | null | undefined): boolean {
+export function isLanAddress(address: string | null | undefined): address is string {
   if (!address) return false;
   let ip = address.trim().toLowerCase();
   const zone = ip.indexOf("%");

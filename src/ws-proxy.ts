@@ -2,6 +2,7 @@ import type { ServerWebSocket, WebSocketHandler } from "bun";
 import type { Config } from "./config.ts";
 import type { Authenticator, Session } from "./guest-auth.ts";
 import type { Logger } from "./log.ts";
+import type { RateLimiter } from "./rate-limit.ts";
 import { filterOutbound, inspectInbound, LOCAL_SUBSCRIPTION } from "./ws-policy.ts";
 
 type State = "awaiting_auth" | "authenticating" | "connecting" | "relaying" | "closed";
@@ -9,6 +10,7 @@ type State = "awaiting_auth" | "authenticating" | "connecting" | "relaying" | "c
 const SUBSCRIPTION_KINDS = new Set(["subscribe_entities", "subscribe_events", LOCAL_SUBSCRIPTION]);
 
 export interface GuestSocketData {
+  ip: string;
   state: State;
   session: Session | null;
   upstream: WebSocket | null;
@@ -34,8 +36,9 @@ function describe(msg: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
-export function initialSocketData(): GuestSocketData {
+export function initialSocketData(ip: string): GuestSocketData {
   return {
+    ip,
     state: "awaiting_auth",
     session: null,
     upstream: null,
@@ -52,7 +55,7 @@ export function haWebSocketUrl(haUrl: URL): string {
   return ws.toString();
 }
 
-export function createGuestBridge(config: Config, auth: Authenticator, log: Logger): GuestBridge {
+export function createGuestBridge(config: Config, auth: Authenticator, log: Logger, limiter: RateLimiter): GuestBridge {
   const upstreamUrl = haWebSocketUrl(config.haUrl);
   const socketsByGuest = new Map<string, Set<GuestSocket>>();
   let lastSeenHaVersion = "unknown";
@@ -219,16 +222,23 @@ export function createGuestBridge(config: Config, auth: Authenticator, log: Logg
       closeGuest(ws, CLOSE_POLICY_VIOLATION, "auth required");
       return;
     }
+    if (limiter.retryAfterMs(ws.data.ip) > 0) {
+      log("warn", "ws guest auth rate limited", { ip: ws.data.ip });
+      closeGuest(ws, CLOSE_POLICY_VIOLATION, "too many attempts");
+      return;
+    }
     ws.data.state = "authenticating";
     const session = await auth.authenticate(msg.access_token);
     if (ws.data.state !== "authenticating") return;
     if (!session) {
-      log("warn", "ws guest auth rejected", { ip: ws.remoteAddress });
+      limiter.recordFailure(ws.data.ip);
+      log("warn", "ws guest auth rejected", { ip: ws.data.ip });
       ws.send(JSON.stringify({ type: "auth_invalid", message: "Invalid access token" }));
       closeGuest(ws, CLOSE_POLICY_VIOLATION, "invalid auth");
       return;
     }
-    log("info", "ws guest authenticated", { ip: ws.remoteAddress, guest: session.user.id });
+    limiter.clear(ws.data.ip);
+    log("info", "ws guest authenticated", { ip: ws.data.ip, guest: session.user.id });
     ws.data.session = session;
     track(ws, session);
     connectUpstream(ws, session);

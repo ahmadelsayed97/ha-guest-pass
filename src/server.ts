@@ -9,6 +9,13 @@ import { classifyRequest } from "./http-policy.ts";
 import { forwardToHA } from "./http-proxy.ts";
 import { isLanAddress } from "./lan.ts";
 import { consoleLogger, type Logger } from "./log.ts";
+import {
+  ADMIN_FAILURE_LIMIT,
+  ADMIN_WINDOW_MS,
+  createRateLimiter,
+  GUEST_FAILURE_LIMIT,
+  GUEST_WINDOW_MS,
+} from "./rate-limit.ts";
 import { createGuestBridge, initialSocketData, type GuestSocketData } from "./ws-proxy.ts";
 
 export interface ServerDeps {
@@ -34,6 +41,11 @@ export function json(body: unknown, status = 200): Response {
   return Response.json(body, { status });
 }
 
+function tooManyRequests(retryAfterMs: number): Response {
+  const retryAfter = String(Math.max(1, Math.ceil(retryAfterMs / 1000)));
+  return new Response("Too many requests", { status: 429, headers: { "retry-after": retryAfter } });
+}
+
 function notFound(req: Request): Response {
   const wantsPage = req.method === "GET" && (req.headers.get("accept") ?? "").includes("text/html");
   return wantsPage ? html(NOT_AVAILABLE_HTML, 404) : new Response("Not found", { status: 404 });
@@ -43,12 +55,44 @@ export function createServer(config: Config, deps: ServerDeps, opts: ServerOptio
   const { auth, store } = deps;
   const log = opts.log ?? consoleLogger;
   const requestIP = opts.requestIP ?? ((req, server) => server.requestIP(req)?.address ?? null);
-  const bridge = createGuestBridge(config, auth, log);
+  const adminLimiter = createRateLimiter({ limit: ADMIN_FAILURE_LIMIT, windowMs: ADMIN_WINDOW_MS });
+  const guestLimiter = createRateLimiter({ limit: GUEST_FAILURE_LIMIT, windowMs: GUEST_WINDOW_MS });
+  const bridge = createGuestBridge(config, auth, log, guestLimiter);
   const isDashboard = (urlPath: string) => auth.dashboards().includes(urlPath);
   const adminContext: AdminContext = { config, store, log, onRevoked: (guestId) => bridge.closeSessionsOf(guestId) };
 
-  function sessionFor(req: Request): Promise<Session | null> {
-    return auth.authenticate(bearerToken(req.headers.get("authorization")));
+  async function sessionFor(req: Request, ip: string): Promise<Session | null> {
+    const session = await auth.authenticate(bearerToken(req.headers.get("authorization")));
+    if (session) guestLimiter.clear(ip);
+    else guestLimiter.recordFailure(ip);
+    return session;
+  }
+
+  async function guestRequest(req: Request, ip: string, handle: (session: Session) => Response | Promise<Response>): Promise<Response> {
+    const retryAfterMs = guestLimiter.retryAfterMs(ip);
+    if (retryAfterMs > 0) {
+      log("warn", "rest guest auth rate limited", { ip });
+      return tooManyRequests(retryAfterMs);
+    }
+    const session = await sessionFor(req, ip);
+    if (!session) {
+      log("warn", "rest guest auth rejected", { method: req.method, path: new URL(req.url).pathname });
+      return json({ message: "Unauthorized" }, 401);
+    }
+    return handle(session);
+  }
+
+  async function handleAdminRequest(req: Request, path: string, ip: string): Promise<Response> {
+    if (path === "/admin") return handleAdmin(req, path, adminContext);
+    const retryAfterMs = adminLimiter.retryAfterMs(ip);
+    if (retryAfterMs > 0) {
+      log("warn", "admin auth rate limited", { ip });
+      return tooManyRequests(retryAfterMs);
+    }
+    const res = await handleAdmin(req, path, adminContext);
+    if (res.status === 401) adminLimiter.recordFailure(ip);
+    else adminLimiter.clear(ip);
+    return res;
   }
 
   async function handleAuthToken(req: Request): Promise<Response> {
@@ -68,10 +112,10 @@ export function createServer(config: Config, deps: ServerDeps, opts: ServerOptio
     return json({ access_token: refreshToken, token_type: "Bearer", expires_in: expiresIn });
   }
 
-  async function handleGuestSession(req: Request): Promise<Response> {
-    const session = await sessionFor(req);
-    if (!session) return json({ message: "Unauthorized" }, 401);
-    return json({ name: session.user.name, dashboards: session.scope.dashboards(), expiresAt: session.expiresAt });
+  function handleGuestSession(req: Request, ip: string): Promise<Response> {
+    return guestRequest(req, ip, (session) =>
+      json({ name: session.user.name, dashboards: session.scope.dashboards(), expiresAt: session.expiresAt }),
+    );
   }
 
   return Bun.serve<GuestSocketData>({
@@ -89,12 +133,12 @@ export function createServer(config: Config, deps: ServerDeps, opts: ServerOptio
 
       if (path === "/guest") return html(GUEST_PAGE_HTML);
       if (path === EXPIRY_SCRIPT_PATH) return javascript(EXPIRY_SCRIPT);
-      if (path === "/guest/session") return handleGuestSession(req);
+      if (path === "/guest/session") return handleGuestSession(req, ip);
       if (path === "/auth/token") return handleAuthToken(req);
       if (path === "/auth/authorize") return html(ACCESS_ENDED_HTML);
-      if (path === "/admin" || path.startsWith("/admin/")) return handleAdmin(req, path, adminContext);
+      if (path === "/admin" || path.startsWith("/admin/")) return handleAdminRequest(req, path, ip);
       if (path === "/api/websocket") {
-        return server.upgrade(req, { data: initialSocketData() }) ? undefined : new Response("Upgrade required", { status: 426 });
+        return server.upgrade(req, { data: initialSocketData(ip) }) ? undefined : new Response("Upgrade required", { status: 426 });
       }
 
       const kind = classifyRequest(req.method, path, isDashboard);
@@ -104,16 +148,13 @@ export function createServer(config: Config, deps: ServerDeps, opts: ServerOptio
         return notFound(req);
       }
 
-      const session = await sessionFor(req);
-      if (!session) {
-        log("warn", "rest guest auth rejected", { method: req.method, path });
-        return json({ message: "Unauthorized" }, 401);
-      }
-      if (!session.scope.canView(kind.entityId)) {
-        log("warn", "rest denied", { method: req.method, path });
-        return notFound(req);
-      }
-      return forwardToHA(req, config, { withToken: true });
+      return guestRequest(req, ip, (session) => {
+        if (!session.scope.canView(kind.entityId)) {
+          log("warn", "rest denied", { method: req.method, path });
+          return notFound(req);
+        }
+        return forwardToHA(req, config, { withToken: true });
+      });
     },
   });
 }

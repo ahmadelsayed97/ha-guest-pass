@@ -28,6 +28,28 @@ describe("admin auth", () => {
     expect(h.ha.httpAuth).toHaveLength(0);
   });
 
+  test("repeated wrong secrets lock the address out, correct secret included", async () => {
+    const wrong = { headers: { authorization: "Bearer nope" } };
+    for (let i = 0; i < 10; i++) expect((await fetch(url("/admin/api/guests"), wrong)).status).toBe(401);
+    const blocked = await fetch(url("/admin/api/guests"), admin());
+    expect(blocked.status).toBe(429);
+    expect(Number(blocked.headers.get("retry-after"))).toBeGreaterThan(0);
+  });
+
+  test("a locked out address can still open the admin page", async () => {
+    const wrong = { headers: { authorization: "Bearer nope" } };
+    for (let i = 0; i < 10; i++) await fetch(url("/admin/api/guests"), wrong);
+    expect((await fetch(url("/admin"))).status).toBe(200);
+  });
+
+  test("a successful request clears the failures", async () => {
+    const wrong = { headers: { authorization: "Bearer nope" } };
+    for (let round = 0; round < 2; round++) {
+      for (let i = 0; i < 9; i++) await fetch(url("/admin/api/guests"), wrong);
+      expect((await fetch(url("/admin/api/guests"), admin())).status).toBe(200);
+    }
+  });
+
   test("the admin page itself is served without auth but holds no secrets", async () => {
     const res = await fetch(url("/admin"));
     expect(res.status).toBe(200);

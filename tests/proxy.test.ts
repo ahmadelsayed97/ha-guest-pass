@@ -150,6 +150,29 @@ describe("REST", () => {
     expect(h.ha.httpAuth).toHaveLength(0);
   });
 
+  test("repeated bad guest tokens lock the address out", async () => {
+    const path = new URL("/api/camera_proxy/camera.front", h.proxyUrl);
+    for (let i = 0; i < 20; i++) expect((await fetch(path, { headers: { authorization: "Bearer nope" } })).status).toBe(401);
+    const blocked = await fetch(path, { headers: { authorization: `Bearer ${h.token}` } });
+    expect(blocked.status).toBe(429);
+    expect(Number(blocked.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect(h.ha.httpAuth).toHaveLength(0);
+  });
+
+  test("a locked out address can still load the frontend", async () => {
+    const path = new URL("/api/camera_proxy/camera.front", h.proxyUrl);
+    for (let i = 0; i < 20; i++) await fetch(path, { headers: { authorization: "Bearer nope" } });
+    expect((await fetch(new URL("/", h.proxyUrl))).status).toBe(200);
+  });
+
+  test("bad guest tokens over REST also lock the WebSocket", async () => {
+    const path = new URL("/api/camera_proxy/camera.front", h.proxyUrl);
+    for (let i = 0; i < 20; i++) await fetch(path, { headers: { authorization: "Bearer nope" } });
+    const { rec } = await wsAuth(h.token);
+    expect((await rec.closed).code).toBe(1008);
+    expect(h.ha.wsConnections).toBe(0);
+  });
+
   test("frontend root forwarded without any Authorization", async () => {
     const res = await fetch(new URL("/", h.proxyUrl), { headers: { authorization: `Bearer ${h.token}` } });
     expect(res.status).toBe(200);

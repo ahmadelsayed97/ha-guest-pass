@@ -3,11 +3,11 @@ import type { Config } from "./config.ts";
 import type { Authenticator, Session } from "./guest-auth.ts";
 import type { Logger } from "./log.ts";
 import type { RateLimiter } from "./rate-limit.ts";
-import { filterOutbound, inspectInbound, LOCAL_SUBSCRIPTION } from "./ws-policy.ts";
+import { filterOutbound, HISTORY_STREAM, inspectInbound, LOCAL_SUBSCRIPTION } from "./ws-policy.ts";
 
 type State = "awaiting_auth" | "authenticating" | "connecting" | "relaying" | "closed";
 
-const SUBSCRIPTION_KINDS = new Set(["subscribe_entities", "subscribe_events", LOCAL_SUBSCRIPTION]);
+const SUBSCRIPTION_KINDS = new Set(["subscribe_entities", "subscribe_events", HISTORY_STREAM, LOCAL_SUBSCRIPTION]);
 
 export interface GuestSocketData {
   ip: string;

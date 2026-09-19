@@ -65,7 +65,7 @@ describe("redactConfig", () => {
 
   test("reduces components to an allowlist", () => {
     const out = redactConfig(config) as Record<string, unknown>;
-    expect(out.components).toEqual(["frontend", "lovelace"]);
+    expect(out.components).toEqual(["frontend", "lovelace", "history"]);
   });
 
   test("does not mutate its input", () => {
@@ -141,6 +141,55 @@ describe("filterDashboard", () => {
     const input = { cards: [{ entity: "lock.front_door" }] };
     filter(input);
     expect(input.cards[0]!.entity).toBe("lock.front_door");
+  });
+
+  describe("cards emptied of entities", () => {
+    test("an entities card whose every entity was out of scope is removed", () => {
+      const cards = [{ type: "entities", entities: ["lock.back", "lock.front"] }, { type: "tile", entity: "light.kitchen" }];
+      expect(filter({ views: [{ cards }] })).toEqual({ views: [{ cards: [{ type: "tile", entity: "light.kitchen" }] }] });
+    });
+
+    test("a custom card whose sub-buttons all pointed out of scope is removed", () => {
+      const separator = { type: "custom:bubble-card", card_type: "separator", name: "Bath", sub_button: { main: [{ entity: "light.bath" }], bottom: [] } };
+      const cards = [separator, { type: "tile", entity: "light.kitchen" }];
+      expect(filter({ views: [{ cards }] })).toEqual({ views: [{ cards: [{ type: "tile", entity: "light.kitchen" }] }] });
+    });
+
+    test("a card that keeps one entity stays with the rest trimmed", () => {
+      const cards = [{ type: "entities", entities: ["lock.back", "sensor.temp"] }];
+      expect(filter({ views: [{ cards }] })).toEqual({ views: [{ cards: [{ type: "entities", entities: ["sensor.temp"] }] }] });
+    });
+  });
+
+  describe("orphaned headings", () => {
+    const heading = (text: string) => ({ type: "heading", heading: text });
+
+    test("a heading whose cards were all removed goes with them", () => {
+      const cards = [heading("Living Room"), { type: "tile", entity: "light.kitchen" }, heading("Guest Bathroom"), { type: "tile", entity: "light.bath" }, { type: "tile", entity: "fan.bath" }];
+      expect(filter({ views: [{ cards }] })).toEqual({ views: [{ cards: [heading("Living Room"), { type: "tile", entity: "light.kitchen" }] }] });
+    });
+
+    test("a heading that keeps one of its cards stays", () => {
+      const cards = [heading("Mixed"), { type: "tile", entity: "light.bath" }, { type: "tile", entity: "light.kitchen" }];
+      expect(filter({ views: [{ cards }] })).toEqual({ views: [{ cards: [heading("Mixed"), { type: "tile", entity: "light.kitchen" }] }] });
+    });
+
+    test("a card without entities that never had cards under it stays", () => {
+      const cards = [{ type: "tile", entity: "light.kitchen" }, { type: "markdown", content: "Enjoy your stay" }];
+      expect(filter({ views: [{ cards }] })).toEqual({ views: [{ cards }] });
+    });
+
+    test("consecutive entity-less cards are judged by the group that follows", () => {
+      const cards = [heading("Bath"), { type: "markdown", content: "Towels in the closet" }, { type: "tile", entity: "light.bath" }, heading("Kitchen"), { type: "tile", entity: "light.kitchen" }];
+      expect(filter({ views: [{ cards }] })).toEqual({ views: [{ cards: [heading("Kitchen"), { type: "tile", entity: "light.kitchen" }] }] });
+    });
+
+    test("applies inside sections", () => {
+      const out = filter({
+        views: [{ type: "sections", sections: [{ type: "grid", cards: [heading("Kitchen"), { type: "tile", entity: "light.kitchen" }, heading("Bath"), { type: "tile", entity: "light.bath" }] }] }],
+      });
+      expect(out).toEqual({ views: [{ type: "sections", sections: [{ type: "grid", cards: [heading("Kitchen"), { type: "tile", entity: "light.kitchen" }] }] }] });
+    });
   });
 
   describe("empty containers", () => {

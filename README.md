@@ -17,12 +17,12 @@ configuration, start it. The add-on runs on the host network so it sees real
 client addresses, which the LAN check and the lockout depend on. Guest records
 and the signing key live in its data directory. Details in `addon/DOCS.md`.
 
-Anywhere else:
+Anywhere else, with Bun 1.4 or newer:
 
 ```sh
 cp .env.example .env   # fill in HA_URL, HA_TOKEN, SIGNING_KEY, ADMIN_SECRET
 bun install
-bun run dev
+bun start
 ```
 
 or build the `Dockerfile` and run it with `--network host` and the same
@@ -47,7 +47,8 @@ that polls the session and shows the countdown; it is cosmetic, expiry itself
 is enforced by the proxy. The proxy verifies the token on every `/api` request
 and on the WebSocket `auth` message, looks up the guest record, and swaps in
 the real token before talking to HA. HA's `/auth/token` endpoint is answered by
-the proxy; the rest of `/auth` is blocked. Requests from outside the LAN get a
+the proxy, `/auth/authorize` shows the access-ended page, and the rest of
+`/auth` is blocked. Requests from outside the LAN get a
 403 based on the socket address, not headers. Addresses that keep failing a
 credential check are locked out for a few minutes.
 
@@ -55,9 +56,13 @@ On the WebSocket, each message from the guest is checked against an allowlist
 of types and rewritten before forwarding, and each message from HA is filtered
 by the guest's scope before it reaches them. Service calls must target
 controllable entities by id; area, device and label targets are refused.
+History streams are limited to scoped entities, so graphs work; logbook and
+the media browser are not available to guests.
 
 Scopes are resolved when a guest is created and stored with the record. A
 device added to an area later is not granted until you create a new guest.
+
+Verified against Home Assistant 2026.9 with the stock frontend.
 
 ## Tests
 

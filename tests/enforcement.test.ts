@@ -174,6 +174,8 @@ describe("HTTP enforcement", () => {
     const body = await res.text();
     expect(body).toContain("not available");
     expect(body).toContain("hassTokens");
+    expect(body).toContain("/guest/session");
+    expect(body).toContain("access has ended");
     expect(h.ha.httpAuth).toHaveLength(0);
   });
 

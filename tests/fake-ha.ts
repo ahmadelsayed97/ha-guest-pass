@@ -98,6 +98,13 @@ export function startFakeHA(token = "REAL-HA-TOKEN-" + crypto.randomUUID()): Fak
             ws.send(JSON.stringify({ id: msg.id, type: "event", event: { a } }));
             return;
           }
+          case "history/stream": {
+            result(null);
+            const ids = [...(msg.entity_ids as string[]), "lock.front"];
+            const states = Object.fromEntries(ids.map((id) => [id, [{ s: "x", lu: 1 }]]));
+            ws.send(JSON.stringify({ id: msg.id, type: "event", event: { states, start_time: 1, end_time: 2 } }));
+            return;
+          }
           case "call_service":
             result({ context: { id: "ctx" }, response: { secret: true } });
             return;

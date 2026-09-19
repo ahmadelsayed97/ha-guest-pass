@@ -21,6 +21,11 @@ const NAME = /^[a-z0-9_]+$/;
 const TOGGLE_SERVICES = new Set(["turn_on", "turn_off", "toggle"]);
 const NON_ENTITY_TARGET_KEYS = ["area_id", "device_id", "floor_id", "label_id"];
 const TRANSLATION_PARAMS = ["language", "category", "integration", "config_flow"];
+const HISTORY_TIME_PARAMS = ["start_time", "end_time"];
+const HISTORY_FLAG_PARAMS = ["minimal_response", "no_attributes", "significant_changes_only", "include_start_time_state"];
+const HISTORY_EVENT_KEYS = new Set(["states", "start_time", "end_time"]);
+const REGISTRY_LINK_KEYS = ["device_id", "area_id", "labels", "di", "ai", "lb"];
+export const HISTORY_STREAM = "history/stream";
 const DEFAULT_DASHBOARD = "lovelace";
 export const LOCAL_SUBSCRIPTION = "local_subscription";
 const SILENT_EVENT_TYPES = new Set([
@@ -123,6 +128,24 @@ const INBOUND_RULES: Record<string, InboundRule> = {
     return deny(id);
   },
 
+  [HISTORY_STREAM]: (msg, id, { scope }) => {
+    if (!Array.isArray(msg.entity_ids) || msg.entity_ids.length === 0) return deny(id);
+    if (!msg.entity_ids.every((entityId) => isEntityId(entityId) && scope.canView(entityId))) return deny(id);
+    if (typeof msg.start_time !== "string") return deny(id);
+    const message: Message = { id, type: msg.type, entity_ids: msg.entity_ids };
+    for (const key of HISTORY_TIME_PARAMS) {
+      if (msg[key] === undefined) continue;
+      if (typeof msg[key] !== "string") return deny(id);
+      message[key] = msg[key];
+    }
+    for (const key of HISTORY_FLAG_PARAMS) {
+      if (msg[key] === undefined) continue;
+      if (typeof msg[key] !== "boolean") return deny(id);
+      message[key] = msg[key];
+    }
+    return forward(message);
+  },
+
   "lovelace/config": (msg, id, { scope }) => {
     const path = dashboardPath(msg.url_path);
     if (path === undefined || !scope.canOpenDashboard(path)) return deny(id);
@@ -203,6 +226,7 @@ const RESULT_FILTERS: Record<string, ResultFilter> = {
   unsubscribe_events: identity,
   subscribe_events: identity,
   subscribe_entities: identity,
+  [HISTORY_STREAM]: identity,
 
   get_states: (result, { scope }) => (Array.isArray(result) ? result.filter((s) => isObject(s) && scope.canView(s.entity_id as string)) : []),
   get_config: (result) => redactConfig(result),
@@ -224,13 +248,18 @@ const RESULT_FILTERS: Record<string, ResultFilter> = {
   "lovelace/config": (result, { scope, user }) => filterDashboard(result, scope, user.id),
   "config/entity_registry/list_for_display": (result, { scope }) => {
     if (!isObject(result)) return { entities: [] };
-    const entities = Array.isArray(result.entities) ? result.entities.filter((e) => isObject(e) && scope.canView(e.ei as string)) : [];
-    return { ...result, entities };
+    return { ...result, entities: scopedRegistryEntries(result.entities, "ei", scope) };
   },
-  "config/entity_registry/list": (result, { scope }) =>
-    Array.isArray(result) ? result.filter((e) => isObject(e) && scope.canView(e.entity_id as string)) : [],
+  "config/entity_registry/list": (result, { scope }) => scopedRegistryEntries(result, "entity_id", scope),
   call_service: (result) => (isObject(result) ? { context: result.context } : result),
 };
+
+function scopedRegistryEntries(entries: unknown, idKey: string, scope: Scope): Message[] {
+  if (!Array.isArray(entries)) return [];
+  return entries
+    .filter((entry): entry is Message => isObject(entry) && scope.canView(entry[idKey] as string))
+    .map((entry) => Object.fromEntries(Object.entries(entry).filter(([key]) => !REGISTRY_LINK_KEYS.includes(key))));
+}
 
 const EVENT_FILTERS: Record<string, EventFilter> = {
   state_changed: (data, scope) => (isObject(data) && scope.canView(data.entity_id as string) ? data : undefined),
@@ -261,6 +290,13 @@ function filterEntityEvent(event: Message, scope: Scope): Message | null {
   return Object.keys(out).length > 0 ? out : null;
 }
 
+function filterHistoryEvent(event: Message, scope: Scope): Message | null {
+  if (!isObject(event.states)) return null;
+  if (Object.keys(event).some((key) => !HISTORY_EVENT_KEYS.has(key))) return null;
+  const states = Object.fromEntries(Object.entries(event.states).filter(([entityId]) => scope.canView(entityId)));
+  return { ...event, states };
+}
+
 export function filterOutbound(raw: unknown, session: Session, kindOf: KindOf): Message | null {
   if (!isObject(raw) || !isMessageId(raw.id) || typeof raw.type !== "string") return null;
   const { id } = raw;
@@ -284,6 +320,10 @@ export function filterOutbound(raw: unknown, session: Session, kindOf: KindOf): 
       if (!isObject(raw.event)) return null;
       if (kind === "subscribe_entities") {
         const event = filterEntityEvent(raw.event, session.scope);
+        return event ? { id, type: "event", event } : null;
+      }
+      if (kind === HISTORY_STREAM) {
+        const event = filterHistoryEvent(raw.event, session.scope);
         return event ? { id, type: "event", event } : null;
       }
       if (kind === "subscribe_events") {

@@ -33,13 +33,18 @@ Forwarded as-is: `ping`, `unsubscribe_events`, `lovelace/resources`,
 
 Forwarded, result filtered to scope: `get_states`, `get_services`,
 `get_panels`, `lovelace/dashboards/list`, `config/entity_registry/list`,
-`config/entity_registry/list_for_display`, `get_config` (redacted),
+`config/entity_registry/list_for_display` (both also stripped of device,
+area and label links, since guests get none of those registries),
+`get_config` (redacted),
 `lovelace/config` (see below).
 
 Rewritten: `subscribe_entities` gets `entity_ids` set to the scope.
 `subscribe_events` only for `state_changed`, `lovelace_updated`,
 `panels_updated`, `themes_updated`, `core_config_updated`. Registry and
 service-registry subscriptions are accepted but never deliver.
+`history/stream` needs an explicit `entity_ids` list, every id scoped, a
+string `start_time`, and only the known optional fields; each event has its
+`states` reduced to the scope.
 
 Answered locally: `supported_features` (success, so HA never coalesces),
 `auth/current_user` (guest, non-admin), `frontend/get_user_data` and
@@ -71,8 +76,9 @@ GET and HEAD only. Allowed: `/`, `/<scoped dashboard>/...`, HA static paths,
 ## Dashboard config
 
 Cards, sections, views and elements mentioning an unscoped entity are removed.
-Containers left with no entity are removed. `visibility` with a `user`
-condition is enforced by the proxy: the guest id must be listed. Other
-conditions pass through.
+Containers left with no entity are removed, and so is a heading or other
+entity-less card whose following group of cards was removed entirely.
+`visibility` with a `user` condition is enforced by the proxy: the guest id
+must be listed. Other conditions pass through.
 
-History, logbook, `auth/sign_path` and media browser are denied for now.
+Logbook, `auth/sign_path` and media browser are denied.

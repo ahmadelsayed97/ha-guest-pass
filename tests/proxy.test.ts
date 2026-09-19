@@ -110,6 +110,18 @@ describe("WebSocket bridge", () => {
     await rec.closed;
   });
 
+  test("history/stream: HA gets the scoped request, the guest gets scoped history", async () => {
+    const { ws, rec } = await wsAuth(h.token);
+    await rec.next();
+    ws.send(JSON.stringify({ id: 1, type: "history/stream", entity_ids: ["light.kitchen"], start_time: "2026-09-20T00:00:00Z" }));
+    expect(JSON.parse(await rec.next())).toEqual({ id: 1, type: "result", success: true, result: null });
+    const event = JSON.parse(await rec.next());
+    expect(Object.keys(event.event.states)).toEqual(["light.kitchen"]);
+    expect(h.ha.received.at(-1)).toEqual({ id: 1, type: "history/stream", entity_ids: ["light.kitchen"], start_time: "2026-09-20T00:00:00Z" });
+    ws.close();
+    await rec.closed;
+  });
+
   test("guest close closes upstream", async () => {
     const { ws, rec } = await wsAuth(h.token);
     await rec.next();

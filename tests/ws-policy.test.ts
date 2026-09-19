@@ -189,6 +189,84 @@ describe("subscribe_events", () => {
   });
 });
 
+describe("history/stream", () => {
+  const request = {
+    id: 7,
+    type: "history/stream",
+    entity_ids: ["light.kitchen", "sensor.temp"],
+    start_time: "2026-09-20T00:00:00Z",
+    end_time: "2026-09-21T00:00:00Z",
+    minimal_response: true,
+    no_attributes: true,
+    significant_changes_only: false,
+    include_start_time_state: true,
+  };
+
+  test("scoped entities are forwarded with only the known fields", () => {
+    const d = expectForwarded(inbound({ ...request, extra: "x" }));
+    expect(d.message).toEqual({ ...request, id: 7 });
+    expect(d.kind).toBe("history/stream");
+  });
+
+  test("optional fields stay optional", () => {
+    const d = expectForwarded(inbound({ id: 7, type: "history/stream", entity_ids: ["light.kitchen"], start_time: request.start_time }));
+    expect(d.message).toEqual({ id: 7, type: "history/stream", entity_ids: ["light.kitchen"], start_time: request.start_time });
+  });
+
+  test.each([
+    ["an unscoped entity", { ...request, entity_ids: ["light.kitchen", "lock.back"] }],
+    ["no entity_ids, which would mean every entity", { ...request, entity_ids: undefined }],
+    ["an empty entity list", { ...request, entity_ids: [] }],
+    ["a string instead of a list", { ...request, entity_ids: "light.kitchen" }],
+    ["a malformed entity id", { ...request, entity_ids: ["light.kitchen", "not an id"] }],
+    ["a missing start_time", { ...request, start_time: undefined }],
+    ["a non-string start_time", { ...request, start_time: 5 }],
+    ["a non-string end_time", { ...request, end_time: {} }],
+    ["a non-boolean flag", { ...request, minimal_response: "yes" }],
+  ])("%s is refused", (_name, msg) => {
+    expectDenied(inbound(msg), 7);
+  });
+
+  test("the empty result is relayed", () => {
+    expect(filterOutbound({ id: 7, type: "result", success: true, result: null }, session, () => "history/stream")).toEqual({
+      id: 7,
+      type: "result",
+      success: true,
+      result: null,
+    });
+  });
+
+  test("history events keep only scoped entities", () => {
+    const event = {
+      states: { "light.kitchen": [{ s: "on", lu: 1 }], "lock.back": [{ s: "locked", lu: 1 }] },
+      start_time: 1,
+      end_time: 2,
+    };
+    expect(filterOutbound({ id: 7, type: "event", event }, session, () => "history/stream")).toEqual({
+      id: 7,
+      type: "event",
+      event: { states: { "light.kitchen": [{ s: "on", lu: 1 }] }, start_time: 1, end_time: 2 },
+    });
+  });
+
+  test("a history event with only unscoped entities still arrives, empty", () => {
+    const event = { states: { "lock.back": [{ s: "locked", lu: 1 }] }, start_time: 1, end_time: 2 };
+    expect(filterOutbound({ id: 7, type: "event", event }, session, () => "history/stream")).toEqual({
+      id: 7,
+      type: "event",
+      event: { states: {}, start_time: 1, end_time: 2 },
+    });
+  });
+
+  test.each([
+    ["states is a list", { states: [{ entity_id: "lock.back" }], start_time: 1 }],
+    ["states is missing", { start_time: 1, end_time: 2 }],
+    ["an unknown top-level field", { states: {}, start_time: 1, end_time: 2, context: { id: "x" } }],
+  ])("a history event where %s is dropped", (_name, event) => {
+    expect(filterOutbound({ id: 7, type: "event", event }, session, () => "history/stream")).toBeNull();
+  });
+});
+
 describe("lovelace/config", () => {
   test("scoped dashboard forwarded", () => {
     const d = expectForwarded(inbound({ id: 1, type: "lovelace/config", url_path: "lovelace-guest", force: false }));
@@ -380,21 +458,38 @@ describe("outbound results", () => {
     expect(result?.result).toEqual({ views: [{ cards: [{ entity: "light.kitchen" }, forGuest] }] });
   });
 
-  test("entity registry display list filtered", () => {
+  test("entity registry display list is filtered and unlinked from devices, areas and labels", () => {
     kinds.set(8, "config/entity_registry/list_for_display");
     const result = out({
       id: 8,
       type: "result",
       success: true,
-      result: { entity_categories: { 0: "config" }, entities: [{ ei: "light.kitchen", ai: "k" }, { ei: "light.bedroom" }] },
+      result: {
+        entity_categories: { 0: "config" },
+        entities: [
+          { ei: "light.kitchen", di: "dev-1", ai: "k", lb: ["guest"], en: "Kitchen", ic: "mdi:lamp", pl: "hue", tk: "light", hb: false, dp: 1, hn: false, ec: 0 },
+          { ei: "light.bedroom", di: "dev-2" },
+        ],
+      },
     });
-    expect(result?.result).toEqual({ entity_categories: { 0: "config" }, entities: [{ ei: "light.kitchen", ai: "k" }] });
+    expect(result?.result).toEqual({
+      entity_categories: { 0: "config" },
+      entities: [{ ei: "light.kitchen", en: "Kitchen", ic: "mdi:lamp", pl: "hue", tk: "light", hb: false, dp: 1, hn: false, ec: 0 }],
+    });
   });
 
-  test("entity registry list filtered", () => {
+  test("entity registry list is filtered and unlinked from devices, areas and labels", () => {
     kinds.set(9, "config/entity_registry/list");
-    const result = out({ id: 9, type: "result", success: true, result: [{ entity_id: "light.kitchen" }, { entity_id: "light.bedroom" }] });
-    expect(result?.result).toEqual([{ entity_id: "light.kitchen" }]);
+    const result = out({
+      id: 9,
+      type: "result",
+      success: true,
+      result: [
+        { entity_id: "light.kitchen", device_id: "dev-1", area_id: "k", labels: ["guest"], name: "Kitchen", platform: "hue" },
+        { entity_id: "light.bedroom", device_id: "dev-2" },
+      ],
+    });
+    expect(result?.result).toEqual([{ entity_id: "light.kitchen", name: "Kitchen", platform: "hue" }]);
   });
 
   test("call_service result has response stripped", () => {

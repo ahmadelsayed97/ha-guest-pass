@@ -12,7 +12,7 @@ const CONFIG_KEYS_KEPT = new Set([
   "language",
 ]);
 
-const COMPONENTS_KEPT = new Set(["frontend", "lovelace"]);
+const COMPONENTS_KEPT = new Set(["frontend", "lovelace", "history"]);
 
 const EMBEDDED_ENTITY_ID = /(?<![a-z0-9_./:@-])([a-z_][a-z0-9_]*\.[a-z0-9_]+)(?![a-z0-9_./:@-])/g;
 const ENTITY_ID_ANYWHERE = new RegExp(EMBEDDED_ENTITY_ID.source);
@@ -52,15 +52,31 @@ function prune(value: unknown, scope: Scope, guestId: string): unknown {
     const out: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value)) {
       if (mentionsUnscoped(key, scope)) continue;
-      const pruned = prune(item, scope, guestId);
+      const pruned = key === "cards" && Array.isArray(item) ? pruneCards(item, scope, guestId) : prune(item, scope, guestId);
       if (pruned === UNSCOPED) return UNSCOPED;
       if (pruned === EMPTY) continue;
       out[key] = pruned;
     }
-    if (isContainer(out) && !mentionsEntity(out)) return EMPTY;
+    if ((isContainer(out) || mentionsEntity(value)) && !mentionsEntity(out)) return EMPTY;
     return out;
   }
   return value;
+}
+
+function pruneCards(cards: unknown[], scope: Scope, guestId: string): unknown[] {
+  const pruned = cards.map((card) => prune(card, scope, guestId));
+  const hadEntity = cards.map(mentionsEntity);
+  const survived = (index: number) => pruned[index] !== UNSCOPED && pruned[index] !== EMPTY;
+
+  function groupBelowSurvives(index: number): boolean {
+    let next = index + 1;
+    while (next < cards.length && !hadEntity[next]) next++;
+    if (next === cards.length) return true;
+    for (; next < cards.length && hadEntity[next]; next++) if (survived(next)) return true;
+    return false;
+  }
+
+  return pruned.filter((_, index) => survived(index) && (hadEntity[index] || groupBelowSurvives(index)));
 }
 
 function visibleToGuest(visibility: unknown, guestId: string): boolean {

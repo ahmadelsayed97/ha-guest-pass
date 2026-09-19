@@ -44,7 +44,10 @@ export const GUEST_PAGE_HTML = `<!doctype html>
 </body>
 </html>`;
 
-function notice(title: string, text: string): string {
+const ACCESS_ENDED = { title: "This guest access has ended", text: "Ask your host for a new link." };
+const NOT_AVAILABLE = { title: "This page is not available to guests", text: "If your access has ended, ask your host for a new link." };
+
+function notice(title: string, text: string, script: string): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -55,13 +58,31 @@ function notice(title: string, text: string): string {
 </head>
 <body>
 <div>
-<h1>${title}</h1>
-<p>${text}</p>
+<h1 id="title">${title}</h1>
+<p id="text">${text}</p>
 </div>
-<script>try { localStorage.removeItem("hassTokens"); } catch (e) {}</script>
+<script>${script}</script>
 </body>
 </html>`;
 }
 
-export const ACCESS_ENDED_HTML = notice("This guest access has ended", "Ask your host for a new link.");
-export const NOT_AVAILABLE_HTML = notice("This page is not available to guests", "If your access has ended, ask your host for a new link.");
+const FORGET_TOKENS = `try { localStorage.removeItem("hassTokens"); } catch (e) {}`;
+
+const EXPLAIN_THEN_FORGET = `(async function () {
+  var token = null;
+  try { token = JSON.parse(localStorage.getItem("hassTokens")).access_token; } catch (e) {}
+  if (token) {
+    try {
+      var res = await fetch("/guest/session", { headers: { authorization: "Bearer " + token } });
+      if (res.status === 401) {
+        document.title = ${JSON.stringify(ACCESS_ENDED.title)};
+        document.getElementById("title").textContent = ${JSON.stringify(ACCESS_ENDED.title)};
+        document.getElementById("text").textContent = ${JSON.stringify(ACCESS_ENDED.text)};
+        ${FORGET_TOKENS}
+      }
+    } catch (e) {}
+  }
+})();`;
+
+export const ACCESS_ENDED_HTML = notice(ACCESS_ENDED.title, ACCESS_ENDED.text, FORGET_TOKENS);
+export const NOT_AVAILABLE_HTML = notice(NOT_AVAILABLE.title, NOT_AVAILABLE.text, EXPLAIN_THEN_FORGET);

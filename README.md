@@ -23,13 +23,16 @@ granted. Create gives you a link and a QR code to hand over. The same page
 lists guests and revokes them; revoking closes their open connections.
 
 The link carries the token in the URL fragment, so it never reaches the server
-or its logs. When access ends the guest sees a plain "access has ended" page.
+or its logs. In the last ten minutes the guest sees a countdown; when access
+ends they get a plain "access has ended" page.
 
 ## How it works
 
 The `/guest` page checks the token with the proxy, then writes it into
 localStorage in the shape HA's frontend keeps its tokens, so the stock frontend
-believes it is logged in. The proxy verifies the token on every `/api` request
+believes it is logged in. HTML pages coming back from HA get one script added
+that polls the session and shows the countdown; it is cosmetic, expiry itself
+is enforced by the proxy. The proxy verifies the token on every `/api` request
 and on the WebSocket `auth` message, looks up the guest record, and swaps in
 the real token before talking to HA. HA's `/auth/token` endpoint is answered by
 the proxy; the rest of `/auth` is blocked. Requests from outside the LAN get a

@@ -55,7 +55,12 @@ export function startFakeHA(token = "REAL-HA-TOKEN-" + crypto.randomUUID()): Fak
         });
       }
       if (url.pathname === "/auth/authorize") return new Response("HA login page");
-      return new Response(`<html>HA index ${url.pathname}</html>`, { headers: { "content-type": "text/html" } });
+      if (url.pathname.startsWith("/frontend_latest/")) {
+        return new Response('console.log("app")', { headers: { "content-type": "application/javascript" } });
+      }
+      return new Response(`<html><head><title>HA</title></head><body>HA index ${url.pathname}</body></html>`, {
+        headers: { "content-type": "text/html" },
+      });
     },
     websocket: {
       open(ws) {

@@ -4,6 +4,7 @@ import type { Config } from "./config.ts";
 import { bearerToken, type Authenticator, type Session } from "./guest-auth.ts";
 import type { GuestStore } from "./guest-store.ts";
 import { ACCESS_ENDED_HTML, GUEST_PAGE_HTML, NOT_AVAILABLE_HTML } from "./guest-page.ts";
+import { EXPIRY_SCRIPT, EXPIRY_SCRIPT_PATH, withExpiryNotice } from "./expiry-notice.ts";
 import { classifyRequest } from "./http-policy.ts";
 import { forwardToHA } from "./http-proxy.ts";
 import { isLanAddress } from "./lan.ts";
@@ -23,6 +24,10 @@ export interface ServerOptions {
 
 export function html(body: string, status = 200): Response {
   return new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+}
+
+export function javascript(body: string): Response {
+  return new Response(body, { headers: { "content-type": "application/javascript; charset=utf-8", "cache-control": "no-store" } });
 }
 
 export function json(body: unknown, status = 200): Response {
@@ -83,6 +88,7 @@ export function createServer(config: Config, deps: ServerDeps, opts: ServerOptio
       const path = new URL(req.url).pathname;
 
       if (path === "/guest") return html(GUEST_PAGE_HTML);
+      if (path === EXPIRY_SCRIPT_PATH) return javascript(EXPIRY_SCRIPT);
       if (path === "/guest/session") return handleGuestSession(req);
       if (path === "/auth/token") return handleAuthToken(req);
       if (path === "/auth/authorize") return html(ACCESS_ENDED_HTML);
@@ -92,7 +98,7 @@ export function createServer(config: Config, deps: ServerDeps, opts: ServerOptio
       }
 
       const kind = classifyRequest(req.method, path, isDashboard);
-      if (kind === "static") return forwardToHA(req, config, { withToken: false });
+      if (kind === "static") return withExpiryNotice(await forwardToHA(req, config, { withToken: false }));
       if (kind === "deny") {
         log("warn", "rest denied", { method: req.method, path });
         return notFound(req);

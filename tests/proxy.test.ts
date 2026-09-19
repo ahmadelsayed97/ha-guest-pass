@@ -157,6 +157,26 @@ describe("REST", () => {
     expect(h.ha.httpAuth).toEqual([{ path: "/", authorization: null }]);
   });
 
+  test("HTML pages from HA carry the guest expiry script", async () => {
+    const res = await fetch(new URL("/", h.proxyUrl));
+    const body = await res.text();
+    expect(body).toContain("HA index");
+    expect(body).toContain('<script src="/guest/expiry.js"></script>');
+  });
+
+  test("non-HTML assets are passed through untouched", async () => {
+    const res = await fetch(new URL("/frontend_latest/app.js", h.proxyUrl));
+    expect(await res.text()).toBe('console.log("app")');
+  });
+
+  test("/guest/expiry.js is served locally and holds no secrets", async () => {
+    const res = await fetch(new URL("/guest/expiry.js", h.proxyUrl));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("javascript");
+    expect(await res.text()).not.toContain(h.ha.token);
+    expect(h.ha.httpAuth).toHaveLength(0);
+  });
+
   test("other HA auth pages are not reachable", async () => {
     const res = await fetch(new URL("/auth/login_flow", h.proxyUrl));
     expect(res.status).toBe(404);

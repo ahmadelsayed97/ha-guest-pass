@@ -151,10 +151,12 @@
   var secret = sessionStorage.getItem("adminSecret") || "";
   var options = null;
 
+  var apiBase = location.pathname.replace(/\/admin\/?$/, "").replace(/\/$/, "") + "/admin/api";
+
   function api(method, path, body) {
     var headers = { "content-type": "application/json" };
     if (secret) headers.authorization = "Bearer " + secret;
-    return fetch("admin/api" + path, {
+    return fetch(apiBase + path, {
       method: method,
       headers: headers,
       body: body === undefined ? undefined : JSON.stringify(body)

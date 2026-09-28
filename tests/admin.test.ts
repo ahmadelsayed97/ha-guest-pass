@@ -56,6 +56,14 @@ describe("admin auth", () => {
     }
   });
 
+  test("the admin page is served with or without a trailing slash", async () => {
+    for (const path of ["/admin", "/admin/"]) {
+      const res = await fetch(url(path));
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/html");
+    }
+  });
+
   test("the admin page itself is served without auth but holds no secrets", async () => {
     const res = await fetch(url("/admin"));
     expect(res.status).toBe(200);
@@ -257,12 +265,17 @@ describe("ingress", () => {
     expect(h.ha.received.map((m) => m.type)).not.toContain("config/auth/list");
   });
 
-  test("the ingress page is served and calls its API by relative path", async () => {
-    const res = await fetch(ingress("/admin"), asUser("owner-1"));
+  test.each(["/admin", "/admin/", "/"])("the ingress page is served at %s", async (path) => {
+    const res = await fetch(ingress(path), asUser("owner-1"));
     expect(res.status).toBe(200);
-    const html = await res.text();
-    expect(html).toContain('"admin/api"');
-    expect(html).not.toContain('"/admin/api"');
+    expect(res.headers.get("content-type")).toContain("text/html");
+    expect(await res.text()).toContain("Guest Pass");
+  });
+
+  test("the page builds its API base from its own location, whatever the prefix", async () => {
+    const html = await (await fetch(ingress("/admin/"), asUser("owner-1"))).text();
+    expect(html).toContain("location.pathname");
+    expect(html).not.toContain('fetch("/admin/api"');
   });
 
   test("options tell the page which port guests use", async () => {

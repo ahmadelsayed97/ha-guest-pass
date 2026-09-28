@@ -197,7 +197,7 @@ function isAdmin(req: Request, config: Config): boolean {
 }
 
 export async function handleAdmin(req: Request, path: string, ctx: AdminContext, identity?: AdminIdentity): Promise<Response> {
-  if (path === "/admin") return page("admin.html");
+  if (path === "/admin" || path === "/admin/") return page("admin.html");
   if (!identity && !isAdmin(req, ctx.config)) return json({ message: "Unauthorized" }, 401);
   const by = identity ? identity.id : "secret";
 

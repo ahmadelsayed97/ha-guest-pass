@@ -152,7 +152,8 @@ export function createServer(config: Config, deps: ServerDeps, opts: ServerOptio
           return json({ message: "Forbidden" }, 403);
         }
         const identity: AdminIdentity = { id: userId, name: req.headers.get(REMOTE_USER_NAME) ?? userId };
-        return handleAdmin(req, new URL(req.url).pathname, adminContext, identity);
+        const path = new URL(req.url).pathname;
+        return handleAdmin(req, path === "/" ? "/admin" : path, adminContext, identity);
       },
     });
   }

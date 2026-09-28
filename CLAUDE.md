@@ -84,6 +84,11 @@ It accepts connections from `172.30.32.2` only, requires `X-Remote-User-Id`,
 and confirms the user is an active member of `system-admin` via
 `config/auth/list`. Those headers are never read on the public port.
 
+`assets/` holds the SVG marks; `addon/icon.png` and `addon/logo.png` are
+rendered from `mark-dark.svg` and `logo.svg` and must be regenerated when
+they change. Supervisor reads only the PNGs. `mark-light.svg` is kept for a
+future light variant and is unused.
+
 `addon/apparmor.txt` confines the container. Its profile name must equal the
 add-on slug. If the add-on fails to start after a change, check
 `journalctl _TRANSPORT=audit -g apparmor` on the host before loosening it.

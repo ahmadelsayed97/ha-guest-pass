@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/mark-dark.svg" width="96" height="96" alt="">
+</p>
+
 # HA Guest Pass
 
 [![CI](https://github.com/ahmadelsayed97/ha-guest-pass/actions/workflows/ci.yml/badge.svg)](https://github.com/ahmadelsayed97/ha-guest-pass/actions/workflows/ci.yml)

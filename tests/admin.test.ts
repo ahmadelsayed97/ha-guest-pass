@@ -12,7 +12,7 @@ const admin = (init: RequestInit = {}) => ({
   headers: { ...(init.headers as Record<string, string>), authorization: `Bearer ${ADMIN_SECRET}`, "content-type": "application/json" },
 });
 const url = (path: string) => new URL(path, h.proxyUrl);
-const ingress = (path: string) => new URL(path, h.ingressUrl);
+const ingress = (path: string) => new URL(h.ingressUrl.origin + path);
 const asUser = (id: string, init: RequestInit = {}) => ({
   ...init,
   headers: { ...(init.headers as Record<string, string>), "x-remote-user-id": id, "x-remote-user-name": id, "content-type": "application/json" },
@@ -265,7 +265,7 @@ describe("ingress", () => {
     expect(h.ha.received.map((m) => m.type)).not.toContain("config/auth/list");
   });
 
-  test.each(["/admin", "/admin/", "/"])("the ingress page is served at %s", async (path) => {
+  test.each(["/admin", "/admin/", "/", "//admin", "//"])("the ingress page is served at %s", async (path) => {
     const res = await fetch(ingress(path), asUser("owner-1"));
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");

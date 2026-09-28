@@ -6,17 +6,19 @@ until it expires. They never see your credentials.
 
 ## Setup
 
-1. In Home Assistant, open your profile, Security tab, and create a
-   long-lived access token. Paste it into the add-on's `ha_token` option.
-2. Set `admin_secret` to at least 32 random characters, for example the
-   output of `openssl rand -hex 24`.
-3. Start the add-on.
-4. Open `http://homeassistant.local:8124/admin` from a device on your LAN
-   and enter the admin secret.
+1. Start the add-on. Nothing to fill in first.
+2. Open the Log tab and copy the line that reads
+   `admin secret for this add-on: ...`.
+3. Open `http://homeassistant.local:8124/admin` from a device on your network
+   and paste that secret.
 
-Guest records live in the add-on's data directory and survive restarts and
-updates. The key that signs guest links is generated there on first start;
-deleting it invalidates every outstanding link.
+The add-on talks to Home Assistant through the Supervisor, so there is no
+access token to create. To use your own admin secret instead of the generated
+one, put it in the Configuration tab; anything 32 characters or longer works.
+
+Guest records and the generated secrets live in the add-on's data directory
+and survive restarts and updates. Deleting the add-on deletes them, which
+invalidates every outstanding guest link.
 
 ## Creating a guest
 
@@ -46,5 +48,5 @@ answering. Enable it under the add-on's Info tab.
 Anything not in their scope. The add-on filters every WebSocket message and
 REST request against the guest's entity list before it reaches Home
 Assistant, refuses service calls on entities the guest may only view, and
-blocks history, logbook, the media browser, configuration and every other
-endpoint not needed to render a dashboard.
+blocks logbook, the media browser, configuration and every other endpoint not
+needed to render a dashboard.

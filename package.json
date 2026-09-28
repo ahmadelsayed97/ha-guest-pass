@@ -4,11 +4,11 @@
   "description": "Scoped, password-free guest access to your Home Assistant dashboards",
   "keywords": [
     "home-assistant",
+    "home-assistant-addon",
     "homeassistant",
     "hass",
     "guest-access",
-    "reverse-proxy",
-    "addon"
+    "smart-home"
   ],
   "license": "MIT",
   "repository": {

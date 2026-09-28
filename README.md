@@ -7,7 +7,7 @@
 Scoped, password-free guest access to your Home Assistant dashboards. Hand a
 guest a link or a QR code and they can use the rooms and devices you picked
 until it expires. Nothing else in your Home Assistant is reachable from that
-link, and your long-lived token stays on the proxy.
+link, and your credentials never leave the proxy.
 
 Home Assistant can hide an entity in the UI, but it still serves that entity
 over the API. This proxy sits in front and enforces the boundary for real.
@@ -17,7 +17,7 @@ flowchart LR
     proxy["ha-guest-pass :8124<br/>verify, scope, filter"]
     guest["Guest browser"] -->|"signed guest link"| proxy
     you["You"] -->|"admin secret"| proxy
-    proxy -->|"long-lived token"| ha["Home Assistant :8123"]
+    proxy -->|"Home Assistant API"| ha["Home Assistant :8123"]
 ```
 
 Guests reach the proxy and nothing else. Every WebSocket message and HTTP
@@ -29,7 +29,7 @@ refused by socket address. Exact rules:
 
 ## Install as a Home Assistant add-on
 
-Needs Home Assistant OS or Supervised.
+Needs Home Assistant OS or Supervised. Tested against Home Assistant 2026.9.
 
 1. Add this repository to your add-on store:
 
@@ -37,16 +37,26 @@ Needs Home Assistant OS or Supervised.
 
    Or by hand: Settings → Add-ons → Add-on store → ⋮ → Repositories → add
    `https://github.com/ahmadelsayed97/ha-guest-pass`
-2. Install **HA Guest Pass** and fill in its Configuration tab:
+2. Install **HA Guest Pass** and start it. There is nothing to configure: it
+   reaches Home Assistant through the Supervisor, so no access token is
+   needed, and it generates its own admin secret.
+3. Open the Log tab and copy the line reading `admin secret for this add-on:`.
+4. Open `http://homeassistant.local:8124/admin` and paste the secret.
 
-   | Option | Value |
-   | --- | --- |
-   | `ha_token` | Long-lived token from your profile, Security tab |
-   | `admin_secret` | 32 or more random characters: `openssl rand -hex 24` |
-   | `ha_url` | Leave as is unless Home Assistant runs on another host |
+## Creating a guest
 
-3. Info tab: turn on Watchdog, then Start.
-4. Open `http://homeassistant.local:8124/admin`.
+On `/admin` pick a name, a duration, the dashboards the guest may open, and
+each area at view or control, plus any per-entity overrides. Preview lists the
+exact entities that resolves to before you commit to it. You get a link and a
+QR code to hand over, and the same page revokes a guest, which closes their
+open connections immediately.
+
+Scopes are resolved when the guest is created and stored with the record, so a
+device you add to an area later is not granted to guests who already exist.
+
+The guest's token rides in the URL fragment, so it never reaches the server or
+its logs. Guests see a countdown during their last ten minutes and a plain
+"access has ended" page afterwards.
 
 ## Run from source
 
@@ -61,35 +71,6 @@ bun start
 Or build the `Dockerfile` and run it with `--network host` and a volume at
 `/data`. Host networking is not optional: the LAN check and the per-address
 lockout both need to see real client addresses.
-
-## Creating a guest
-
-On `/admin` pick a name, a duration, the dashboards the guest may open, and
-each area at view or control, plus any per-entity overrides. Preview lists the
-exact entities that resolves to before you commit to it. You get a link and a
-QR code to hand over, and the same page revokes a guest, which closes their
-open connections immediately.
-
-Scopes are resolved when the guest is created and stored with the record, so a
-device you add to an area later is not granted to guests who already exist.
-
-The token rides in the URL fragment, so it never reaches the server or its
-logs. Guests see a countdown during their last ten minutes and a plain
-"access has ended" page afterwards.
-
-## Development
-
-```sh
-bun test
-bun run typecheck
-```
-
-Policy code is pure functions, and each rule has tests that try to get around
-it. Integration tests run the proxy against a fake Home Assistant and check
-what crosses each side: the real token goes upstream and nowhere else,
-out-of-scope entities never reach the guest, refused requests never reach HA.
-
-Verified against Home Assistant 2026.9 with the stock frontend.
 
 ## License
 

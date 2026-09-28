@@ -37,7 +37,9 @@ export interface ForwardOptions {
 
 export async function forwardToHA(req: Request, config: Config, opts: ForwardOptions): Promise<Response> {
   const incoming = new URL(req.url);
-  const target = new URL(incoming.pathname + incoming.search, config.haUrl);
+  const target = opts.withToken
+    ? new URL(incoming.pathname.replace(/^\/api\//, "") + incoming.search, config.apiUrl)
+    : new URL(incoming.pathname + incoming.search, config.haUrl);
 
   const headers = new Headers(req.headers);
   for (const name of STRIPPED_REQUEST_HEADERS) headers.delete(name);

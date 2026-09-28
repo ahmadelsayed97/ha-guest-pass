@@ -49,14 +49,8 @@ export function initialSocketData(ip: string): GuestSocketData {
   };
 }
 
-export function haWebSocketUrl(haUrl: URL): string {
-  const ws = new URL("/api/websocket", haUrl);
-  ws.protocol = haUrl.protocol === "https:" ? "wss:" : "ws:";
-  return ws.toString();
-}
-
 export function createGuestBridge(config: Config, auth: Authenticator, log: Logger, limiter: RateLimiter): GuestBridge {
-  const upstreamUrl = haWebSocketUrl(config.haUrl);
+  const upstreamUrl = config.wsUrl;
   const socketsByGuest = new Map<string, Set<GuestSocket>>();
   let lastSeenHaVersion = "unknown";
 

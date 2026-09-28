@@ -20,6 +20,24 @@ describe("loadConfig", () => {
     expect(c.port).toBe(8124);
   });
 
+  test("the API and WebSocket upstreams default to the Home Assistant URL", () => {
+    const c = loadConfig(base);
+    expect(c.apiUrl.toString()).toBe("http://ha.local:8123/api/");
+    expect(c.wsUrl).toBe("ws://ha.local:8123/api/websocket");
+  });
+
+  test("https gives a wss WebSocket upstream", () => {
+    const c = loadConfig({ ...base, HA_URL: "https://ha.local:8123" });
+    expect(c.wsUrl).toBe("wss://ha.local:8123/api/websocket");
+  });
+
+  test("the API and WebSocket upstreams can be pointed elsewhere than the frontend", () => {
+    const c = loadConfig({ ...base, HA_API_URL: "http://supervisor/core/api/", HA_WS_URL: "ws://supervisor/core/websocket" });
+    expect(c.haUrl.origin).toBe("http://ha.local:8123");
+    expect(c.apiUrl.toString()).toBe("http://supervisor/core/api/");
+    expect(c.wsUrl).toBe("ws://supervisor/core/websocket");
+  });
+
   test("secrets are not enumerable", () => {
     const c = loadConfig(base);
     const text = JSON.stringify(c);
@@ -40,6 +58,8 @@ describe("loadConfig", () => {
     [{ ...base, GUEST_STORE_FILE: "" }, "missing GUEST_STORE_FILE"],
     [{ ...base, HA_URL: "ftp://x" }, "bad scheme"],
     [{ ...base, PORT: "99999" }, "bad port"],
+    [{ ...base, HA_API_URL: "ftp://x" }, "bad API scheme"],
+    [{ ...base, HA_WS_URL: "http://x" }, "bad WebSocket scheme"],
   ])("rejects %p (%s)", (env) => {
     expect(() => loadConfig(env)).toThrow();
   });

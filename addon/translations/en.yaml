@@ -1,10 +1,7 @@
 configuration:
-  ha_url:
-    name: Home Assistant URL
-    description: Where the add-on reaches Home Assistant. With host networking the default works.
-  ha_token:
-    name: Long-lived access token
-    description: Created under your profile, Security tab. Stays inside the add-on.
   admin_secret:
     name: Admin secret
-    description: At least 32 characters. Unlocks the /admin page where you create guests.
+    description: Leave empty and one is generated for you, then printed in the add-on log.
+  ha_url:
+    name: Home Assistant URL
+    description: Only needed if Home Assistant does not answer on port 8123 of this machine.

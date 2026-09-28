@@ -1,6 +1,5 @@
 import type { Config } from "./config.ts";
 import type { Registries } from "./resolve.ts";
-import { haWebSocketUrl } from "./ws-proxy.ts";
 
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void };
 
@@ -16,7 +15,7 @@ export class HAClient {
 
   static connect(config: Config): Promise<HAClient> {
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(haWebSocketUrl(config.haUrl));
+      const ws = new WebSocket(config.wsUrl);
       ws.onerror = () => reject(new Error("could not connect to Home Assistant"));
       ws.onclose = () => reject(new Error("Home Assistant closed the connection during auth"));
       ws.onmessage = (event) => {

@@ -2,6 +2,8 @@ export type Env = Record<string, string | undefined>;
 
 export interface Config {
   haUrl: URL;
+  apiUrl: URL;
+  wsUrl: string;
   readonly haToken: string;
   readonly signingKey: Uint8Array;
   readonly adminSecret: string;
@@ -19,6 +21,12 @@ function required(env: Env, key: string): string {
   return value;
 }
 
+function defaultWebSocketUrl(haUrl: URL): string {
+  const url = new URL("/api/websocket", haUrl);
+  url.protocol = haUrl.protocol === "https:" ? "wss:" : "ws:";
+  return url.toString();
+}
+
 function hidden(target: object, key: string, value: unknown): void {
   Object.defineProperty(target, key, { value, enumerable: false, writable: false });
 }
@@ -26,6 +34,14 @@ function hidden(target: object, key: string, value: unknown): void {
 export function loadConfig(env: Env = process.env): Config {
   const haUrl = new URL(required(env, "HA_URL"));
   if (haUrl.protocol !== "http:" && haUrl.protocol !== "https:") throw new Error("HA_URL must be http:// or https://");
+
+  const apiUrl = new URL(env.HA_API_URL ?? new URL("/api/", haUrl));
+  if (apiUrl.protocol !== "http:" && apiUrl.protocol !== "https:") throw new Error("HA_API_URL must be http:// or https://");
+  if (!apiUrl.pathname.endsWith("/")) apiUrl.pathname += "/";
+
+  const wsUrl = env.HA_WS_URL ?? defaultWebSocketUrl(haUrl);
+  if (!wsUrl.startsWith("ws://") && !wsUrl.startsWith("wss://")) throw new Error("HA_WS_URL must be ws:// or wss://");
+
   const haToken = required(env, "HA_TOKEN");
 
   const signingKeyHex = required(env, "SIGNING_KEY");
@@ -41,7 +57,7 @@ export function loadConfig(env: Env = process.env): Config {
   const port = Number(env.PORT ?? "8124");
   if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Error("PORT must be 1-65535");
 
-  const config = { haUrl, guestStoreFile, host: env.HOST ?? "0.0.0.0", port } as Config;
+  const config = { haUrl, apiUrl, wsUrl, guestStoreFile, host: env.HOST ?? "0.0.0.0", port } as Config;
   hidden(config, "haToken", haToken);
   hidden(config, "signingKey", signingKey);
   hidden(config, "adminSecret", adminSecret);

@@ -1,8 +1,8 @@
 # HA Guest Pass
 
-Gives guests a link that opens your Home Assistant dashboard with only the
-areas and entities you picked, for as long as you picked. No HA user is
-created and guests never see your credentials.
+Scoped, password-free guest access to your Home Assistant dashboards. Hand a
+guest a link or a QR code and they can use the rooms and devices you picked
+until it expires. They never see your credentials.
 
 ## Setup
 

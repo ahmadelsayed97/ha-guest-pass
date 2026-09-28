@@ -1,77 +1,96 @@
-# ha-guest-pass
+# HA Guest Pass
 
-Reverse proxy that gives guests temporary access to a Home Assistant dashboard
-without creating an HA user. LAN only.
+[![CI](https://github.com/ahmadelsayed97/ha-guest-pass/actions/workflows/ci.yml/badge.svg)](https://github.com/ahmadelsayed97/ha-guest-pass/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/ahmadelsayed97/ha-guest-pass)](https://github.com/ahmadelsayed97/ha-guest-pass/releases)
+[![License](https://img.shields.io/github/license/ahmadelsayed97/ha-guest-pass)](LICENSE)
 
-The proxy holds the long-lived token; guests never see it. Each guest gets a
-signed link that expires, can be revoked, and only reaches the dashboards and
-entities you picked. Anything else is refused before it reaches HA. See
-`docs/enforcement.md` for the exact rules.
+Scoped, password-free guest access to your Home Assistant dashboards. Hand a
+guest a link or a QR code and they can use the rooms and devices you picked
+until it expires. Nothing else in your Home Assistant is reachable from that
+link, and your long-lived token stays on the proxy.
 
-## Running
+Home Assistant can hide an entity in the UI, but it still serves that entity
+over the API. This proxy sits in front and enforces the boundary for real.
 
-As a Home Assistant add-on (HA OS or Supervised): Settings, Add-ons, Add-on
-store, Repositories, add `https://github.com/ahmadelsayed97/ha-guest-pass`,
-install HA Guest Pass, paste a long-lived token and an admin secret into its
-configuration, start it. The add-on runs on the host network so it sees real
-client addresses, which the LAN check and the lockout depend on. Guest records
-and the signing key live in its data directory. Details in `addon/DOCS.md`.
+```mermaid
+flowchart LR
+    proxy["ha-guest-pass :8124<br/>verify, scope, filter"]
+    guest["Guest browser"] -->|"signed guest link"| proxy
+    you["You"] -->|"admin secret"| proxy
+    proxy -->|"long-lived token"| ha["Home Assistant :8123"]
+```
 
-Anywhere else, with Bun 1.4 or newer:
+Guests reach the proxy and nothing else. Every WebSocket message and HTTP
+request is checked against that guest's scope before it reaches Home
+Assistant, and everything coming back is filtered to the same scope. Links are
+signed, expire, and can be revoked. Connections from outside the LAN are
+refused by socket address. Exact rules:
+[docs/enforcement.md](docs/enforcement.md).
+
+## Install as a Home Assistant add-on
+
+Needs Home Assistant OS or Supervised.
+
+1. Add this repository to your add-on store:
+
+   [![Add repository to your Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fahmadelsayed97%2Fha-guest-pass)
+
+   Or by hand: Settings → Add-ons → Add-on store → ⋮ → Repositories → add
+   `https://github.com/ahmadelsayed97/ha-guest-pass`
+2. Install **HA Guest Pass** and fill in its Configuration tab:
+
+   | Option | Value |
+   | --- | --- |
+   | `ha_token` | Long-lived token from your profile, Security tab |
+   | `admin_secret` | 32 or more random characters: `openssl rand -hex 24` |
+   | `ha_url` | Leave as is unless Home Assistant runs on another host |
+
+3. Info tab: turn on Watchdog, then Start.
+4. Open `http://homeassistant.local:8124/admin`.
+
+## Run from source
+
+Bun 1.4 or newer.
 
 ```sh
-cp .env.example .env   # fill in HA_URL, HA_TOKEN, SIGNING_KEY, ADMIN_SECRET
+cp .env.example .env   # HA_URL, HA_TOKEN, SIGNING_KEY, ADMIN_SECRET
 bun install
 bun start
 ```
 
-or build the `Dockerfile` and run it with `--network host` and the same
-variables, mounting a volume at `/data`.
+Or build the `Dockerfile` and run it with `--network host` and a volume at
+`/data`. Host networking is not optional: the LAN check and the per-address
+lockout both need to see real client addresses.
 
-Open `http://<proxy-host>:8124/admin` from the LAN, enter the admin secret,
-and create a guest: name, how long, which dashboards, which areas at view or
-control, and any per-entity overrides. Preview shows exactly what would be
-granted. Create gives you a link and a QR code to hand over. The same page
-lists guests and revokes them; revoking closes their open connections.
+## Creating a guest
 
-The link carries the token in the URL fragment, so it never reaches the server
-or its logs. In the last ten minutes the guest sees a countdown; when access
-ends they get a plain "access has ended" page.
+On `/admin` pick a name, a duration, the dashboards the guest may open, and
+each area at view or control, plus any per-entity overrides. Preview lists the
+exact entities that resolves to before you commit to it. You get a link and a
+QR code to hand over, and the same page revokes a guest, which closes their
+open connections immediately.
 
-## How it works
+Scopes are resolved when the guest is created and stored with the record, so a
+device you add to an area later is not granted to guests who already exist.
 
-The `/guest` page checks the token with the proxy, then writes it into
-localStorage in the shape HA's frontend keeps its tokens, so the stock frontend
-believes it is logged in. HTML pages coming back from HA get one script added
-that polls the session and shows the countdown; it is cosmetic, expiry itself
-is enforced by the proxy. The proxy verifies the token on every `/api` request
-and on the WebSocket `auth` message, looks up the guest record, and swaps in
-the real token before talking to HA. HA's `/auth/token` endpoint is answered by
-the proxy, `/auth/authorize` shows the access-ended page, and the rest of
-`/auth` is blocked. Requests from outside the LAN get a
-403 based on the socket address, not headers. Addresses that keep failing a
-credential check are locked out for a few minutes.
+The token rides in the URL fragment, so it never reaches the server or its
+logs. Guests see a countdown during their last ten minutes and a plain
+"access has ended" page afterwards.
 
-On the WebSocket, each message from the guest is checked against an allowlist
-of types and rewritten before forwarding, and each message from HA is filtered
-by the guest's scope before it reaches them. Service calls must target
-controllable entities by id; area, device and label targets are refused.
-History streams are limited to scoped entities, so graphs work; logbook and
-the media browser are not available to guests.
-
-Scopes are resolved when a guest is created and stored with the record. A
-device added to an area later is not granted until you create a new guest.
-
-Verified against Home Assistant 2026.9 with the stock frontend.
-
-## Tests
+## Development
 
 ```sh
 bun test
 bun run typecheck
 ```
 
-Policy code is pure functions, so each rule has direct tests that try to get
-around it. Integration tests run the proxy against a small fake HA and check
-what crosses each side: the real token goes upstream and nowhere else, out of
-scope entities never reach the guest, and refused requests never reach HA.
+Policy code is pure functions, and each rule has tests that try to get around
+it. Integration tests run the proxy against a fake Home Assistant and check
+what crosses each side: the real token goes upstream and nowhere else,
+out-of-scope entities never reach the guest, refused requests never reach HA.
+
+Verified against Home Assistant 2026.9 with the stock frontend.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

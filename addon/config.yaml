@@ -1,7 +1,7 @@
 name: HA Guest Pass
 version: "0.1.0"
 slug: ha_guest_pass
-description: Scoped, temporary, password-free guest access to your dashboards
+description: Scoped, password-free guest access to your Home Assistant dashboards
 url: https://github.com/ahmadelsayed97/ha-guest-pass
 arch:
   - amd64

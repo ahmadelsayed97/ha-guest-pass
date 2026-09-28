@@ -100,6 +100,12 @@ export class GuestStore {
     return guest;
   }
 
+  renew(id: string, expiresAt: number): Guest | undefined {
+    const previous = this.guests.get(id);
+    if (!previous) return undefined;
+    return this.create({ name: previous.name, expiresAt, definition: previous.definition, scope: previous.scope });
+  }
+
   revoke(id: string): boolean {
     const guest = this.guests.get(id);
     if (!guest || guest.revokedAt !== null) return false;

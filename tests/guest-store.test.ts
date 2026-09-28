@@ -41,6 +41,24 @@ describe("GuestStore", () => {
     expect((await GuestStore.open(file)).get(guest.id)?.revokedAt).toBeNumber();
   });
 
+  test("renew copies name, definition and scope into a new record with new ids", async () => {
+    const store = await GuestStore.open(file);
+    const original = store.create({ name: "Ada", expiresAt: 1_800_000_000_000, definition, scope });
+    store.revoke(original.id);
+    const renewed = store.renew(original.id, 1_900_000_000_000)!;
+    expect(renewed.id).not.toBe(original.id);
+    expect(renewed.tokenId).not.toBe(original.tokenId);
+    expect(renewed).toMatchObject({ name: "Ada", expiresAt: 1_900_000_000_000, revokedAt: null, definition, scope });
+    expect(store.get(original.id)?.revokedAt).toBeNumber();
+    await store.flush();
+    expect((await GuestStore.open(file)).get(renewed.id)).toEqual(renewed);
+  });
+
+  test("renew of an unknown guest is undefined", async () => {
+    const store = await GuestStore.open(file);
+    expect(store.renew("missing", 1_900_000_000_000)).toBeUndefined();
+  });
+
   test("a corrupt file fails to open rather than starting empty", async () => {
     await Bun.write(file, "{not json");
     await expect(GuestStore.open(file)).rejects.toThrow();

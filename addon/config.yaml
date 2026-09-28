@@ -1,5 +1,5 @@
 name: HA Guest Pass
-version: "0.2.0"
+version: "0.3.0"
 slug: ha_guest_pass
 description: Scoped, password-free guest access to your Home Assistant dashboards
 url: https://github.com/ahmadelsayed97/ha-guest-pass
@@ -10,6 +10,11 @@ image: ghcr.io/ahmadelsayed97/ha-guest-pass-{arch}
 startup: services
 host_network: true
 homeassistant_api: true
+ingress: true
+ingress_port: 0
+ingress_entry: /admin
+panel_icon: mdi:account-key
+panel_title: Guest Pass
 watchdog: http://[HOST]:8124/health
 options: {}
 schema:

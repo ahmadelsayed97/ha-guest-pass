@@ -20,6 +20,9 @@ client, not a custom component, so HA being Python is irrelevant.
 Runtime dependencies are `jose` (HS256 JWT) and `qrcode`. Do not add more
 without a reason that survives review.
 
+Browser-facing pages live in `public/` as plain HTML and JS and are served
+with `Bun.file`. `src/` contains no markup.
+
 ## Security rules
 
 This is a security tool. Weak enforcement is worse than none because it gives
@@ -67,6 +70,23 @@ an area later is not granted to existing guests.
 `docs/enforcement.md` is the authoritative list of what is forwarded,
 rewritten, answered locally or denied. Update it in the same commit as any
 policy change.
+
+## Add-on
+
+The add-on keeps host networking on purpose: the LAN check and the per-address
+lockout need real client addresses, and Docker's bridge network hides them on
+Supervised installs. That costs one point of Supervisor's security rating
+(7 of 8) and is the right trade.
+
+The admin page is served through Ingress on a listener bound to
+`172.30.32.1`, the only address Supervisor dials for a host-network add-on.
+It accepts connections from `172.30.32.2` only, requires `X-Remote-User-Id`,
+and confirms the user is an active member of `system-admin` via
+`config/auth/list`. Those headers are never read on the public port.
+
+`addon/apparmor.txt` confines the container. Its profile name must equal the
+add-on slug. If the add-on fails to start after a change, check
+`journalctl _TRANSPORT=audit -g apparmor` on the host before loosening it.
 
 ## Conventions
 

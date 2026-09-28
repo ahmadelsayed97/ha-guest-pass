@@ -1,7 +1,7 @@
 configuration:
   admin_secret:
     name: Admin secret
-    description: Leave empty and one is generated for you, then printed in the add-on log.
+    description: Only for opening the admin page outside Home Assistant, at port 8124. Leave empty unless you need that.
   ha_url:
     name: Home Assistant URL
     description: Only needed if Home Assistant does not answer on port 8123 of this machine.

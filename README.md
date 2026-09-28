@@ -16,7 +16,7 @@ over the API. This proxy sits in front and enforces the boundary for real.
 flowchart LR
     proxy["ha-guest-pass :8124<br/>verify, scope, filter"]
     guest["Guest browser"] -->|"signed guest link"| proxy
-    you["You"] -->|"admin secret"| proxy
+    you["You, in the HA sidebar"] -->|"Ingress"| proxy
     proxy -->|"Home Assistant API"| ha["Home Assistant :8123"]
 ```
 
@@ -37,22 +37,22 @@ Needs Home Assistant OS or Supervised. Tested against Home Assistant 2026.9.
 
    Or by hand: Settings → Add-ons → Add-on store → ⋮ → Repositories → add
    `https://github.com/ahmadelsayed97/ha-guest-pass`
-2. Install **HA Guest Pass** and start it. There is nothing to configure: it
-   reaches Home Assistant through the Supervisor, so no access token is
-   needed, and it generates its own admin secret.
-3. Open the Log tab and copy the line reading `admin secret for this add-on:`.
-4. Open `http://homeassistant.local:8124/admin` and paste the secret.
+2. Install **HA Guest Pass** and start it. Nothing to configure.
+3. Open **Guest Pass** from the Home Assistant sidebar. You are already
+   signed in.
 
 ## Creating a guest
 
-On `/admin` pick a name, a duration, the dashboards the guest may open, and
-each area at view or control, plus any per-entity overrides. Preview lists the
-exact entities that resolves to before you commit to it. You get a link and a
-QR code to hand over, and the same page revokes a guest, which closes their
-open connections immediately.
+Pick a name, a duration, the dashboards the guest may open, and for each area
+whether the guest can view or control it. Every entity in a chosen area then
+appears, grouped by device, with its own off, view or control switch, so
+exceptions are one click; anything outside those areas can be added by name.
+Create gives you a link and a QR code to hand over. Revoke closes the guest's
+open connections immediately. Renew gives an ended guest a new link with the
+same access; the old link stays dead.
 
-Scopes are resolved when the guest is created and stored with the record, so a
-device you add to an area later is not granted to guests who already exist.
+The scope is fixed when the guest is created. A device you add to an area
+later is not visible to existing guests.
 
 The guest's token rides in the URL fragment, so it never reaches the server or
 its logs. Guests see a countdown during their last ten minutes and a plain

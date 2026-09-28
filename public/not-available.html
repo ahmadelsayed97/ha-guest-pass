@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>This page is not available to guests</title>
+<style>body{font-family:system-ui,sans-serif;display:grid;place-items:center;height:100vh;margin:0;background:#111;color:#eee;text-align:center}</style>
+</head>
+<body>
+<div>
+<h1 id="title">This page is not available to guests</h1>
+<p id="text">If your access has ended, ask your host for a new link.</p>
+</div>
+<script>(async function () {
+  var token = null;
+  try { token = JSON.parse(localStorage.getItem("hassTokens")).access_token; } catch (e) {}
+  if (token) {
+    try {
+      var res = await fetch("/guest/session", { headers: { authorization: "Bearer " + token } });
+      if (res.status === 401) {
+        document.title = "This guest access has ended";
+        document.getElementById("title").textContent = "This guest access has ended";
+        document.getElementById("text").textContent = "Ask your host for a new link.";
+        try { localStorage.removeItem("hassTokens"); } catch (e) {}
+      }
+    } catch (e) {}
+  }
+})();</script>
+</body>
+</html>

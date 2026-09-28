@@ -4,6 +4,7 @@ WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production
 COPY src ./src
+COPY public ./public
 
 ENV GUEST_STORE_FILE=/data/guests.json
 EXPOSE 8124

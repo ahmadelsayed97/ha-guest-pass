@@ -1,14 +1,15 @@
 import type { Server } from "bun";
-import { handleAdmin, type AdminContext } from "./admin.ts";
+import { handleAdmin, type AdminContext, type AdminIdentity } from "./admin.ts";
 import type { Config } from "./config.ts";
 import { bearerToken, type Authenticator, type Session } from "./guest-auth.ts";
 import type { GuestStore } from "./guest-store.ts";
-import { ACCESS_ENDED_HTML, GUEST_PAGE_HTML, NOT_AVAILABLE_HTML } from "./guest-page.ts";
-import { EXPIRY_SCRIPT, EXPIRY_SCRIPT_PATH, withExpiryNotice } from "./expiry-notice.ts";
+import { isAdminUser } from "./ha-client.ts";
+import { EXPIRY_SCRIPT_PATH, withExpiryNotice } from "./expiry-notice.ts";
 import { classifyRequest } from "./http-policy.ts";
 import { forwardToHA } from "./http-proxy.ts";
 import { isLanAddress } from "./lan.ts";
 import { consoleLogger, type Logger } from "./log.ts";
+import { page, script } from "./pages.ts";
 import {
   ADMIN_FAILURE_LIMIT,
   ADMIN_WINDOW_MS,
@@ -23,19 +24,28 @@ export interface ServerDeps {
   store: GuestStore;
 }
 
+export interface IngressOptions {
+  hostname: string;
+  port: number;
+  supervisorAddress: string;
+  requestIP?: (req: Request, server: Server<undefined>) => string | null;
+}
+
 export interface ServerOptions {
   log?: Logger;
   port?: number;
   requestIP?: (req: Request, server: Server<GuestSocketData>) => string | null;
+  ingress?: IngressOptions;
 }
 
-export function html(body: string, status = 200): Response {
-  return new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+export interface Proxy {
+  server: Server<GuestSocketData>;
+  ingress: Server<undefined> | null;
+  stop(): void;
 }
 
-export function javascript(body: string): Response {
-  return new Response(body, { headers: { "content-type": "application/javascript; charset=utf-8", "cache-control": "no-store" } });
-}
+const REMOTE_USER_ID = "x-remote-user-id";
+const REMOTE_USER_NAME = "x-remote-user-display-name";
 
 export function json(body: unknown, status = 200): Response {
   return Response.json(body, { status });
@@ -48,10 +58,10 @@ function tooManyRequests(retryAfterMs: number): Response {
 
 function notFound(req: Request): Response {
   const wantsPage = req.method === "GET" && (req.headers.get("accept") ?? "").includes("text/html");
-  return wantsPage ? html(NOT_AVAILABLE_HTML, 404) : new Response("Not found", { status: 404 });
+  return wantsPage ? page("not-available.html", 404) : new Response("Not found", { status: 404 });
 }
 
-export function createServer(config: Config, deps: ServerDeps, opts: ServerOptions = {}): Server<GuestSocketData> {
+export function createServer(config: Config, deps: ServerDeps, opts: ServerOptions = {}): Proxy {
   const { auth, store } = deps;
   const log = opts.log ?? consoleLogger;
   const requestIP = opts.requestIP ?? ((req, server) => server.requestIP(req)?.address ?? null);
@@ -59,7 +69,13 @@ export function createServer(config: Config, deps: ServerDeps, opts: ServerOptio
   const guestLimiter = createRateLimiter({ limit: GUEST_FAILURE_LIMIT, windowMs: GUEST_WINDOW_MS });
   const bridge = createGuestBridge(config, auth, log, guestLimiter);
   const isDashboard = (urlPath: string) => auth.dashboards().includes(urlPath);
-  const adminContext: AdminContext = { config, store, log, onRevoked: (guestId) => bridge.closeSessionsOf(guestId) };
+  const adminContext: AdminContext = {
+    config,
+    store,
+    log,
+    guestPort: () => server.port ?? config.port,
+    onRevoked: (guestId) => bridge.closeSessionsOf(guestId),
+  };
 
   async function sessionFor(req: Request, ip: string): Promise<Session | null> {
     const session = await auth.authenticate(bearerToken(req.headers.get("authorization")));
@@ -118,7 +134,30 @@ export function createServer(config: Config, deps: ServerDeps, opts: ServerOptio
     );
   }
 
-  return Bun.serve<GuestSocketData>({
+  function ingressServer(ingress: IngressOptions): Server<undefined> {
+    const requestIP = ingress.requestIP ?? ((req, server) => server.requestIP(req)?.address ?? null);
+    return Bun.serve<undefined>({
+      hostname: ingress.hostname,
+      port: ingress.port,
+      async fetch(req, server) {
+        const ip = requestIP(req, server);
+        if (ip !== ingress.supervisorAddress) {
+          log("warn", "ingress request not from Supervisor", { ip });
+          return new Response("Forbidden", { status: 403 });
+        }
+        const userId = req.headers.get(REMOTE_USER_ID);
+        if (!userId) return json({ message: "Unauthorized" }, 401);
+        if (!(await isAdminUser(config, userId))) {
+          log("warn", "ingress user is not an administrator", { user: userId });
+          return json({ message: "Forbidden" }, 403);
+        }
+        const identity: AdminIdentity = { id: userId, name: req.headers.get(REMOTE_USER_NAME) ?? userId };
+        return handleAdmin(req, new URL(req.url).pathname, adminContext, identity);
+      },
+    });
+  }
+
+  const server = Bun.serve<GuestSocketData>({
     hostname: config.host,
     port: opts.port ?? config.port,
     websocket: bridge.handler,
@@ -132,11 +171,11 @@ export function createServer(config: Config, deps: ServerDeps, opts: ServerOptio
       const path = new URL(req.url).pathname;
 
       if (path === "/health") return json({ status: "ok" });
-      if (path === "/guest") return html(GUEST_PAGE_HTML);
-      if (path === EXPIRY_SCRIPT_PATH) return javascript(EXPIRY_SCRIPT);
+      if (path === "/guest") return page("guest.html");
+      if (path === EXPIRY_SCRIPT_PATH) return script("expiry.js");
       if (path === "/guest/session") return handleGuestSession(req, ip);
       if (path === "/auth/token") return handleAuthToken(req);
-      if (path === "/auth/authorize") return html(ACCESS_ENDED_HTML);
+      if (path === "/auth/authorize") return page("access-ended.html");
       if (path === "/admin" || path.startsWith("/admin/")) return handleAdminRequest(req, path, ip);
       if (path === "/api/websocket") {
         return server.upgrade(req, { data: initialSocketData(ip) }) ? undefined : new Response("Upgrade required", { status: 426 });
@@ -158,4 +197,14 @@ export function createServer(config: Config, deps: ServerDeps, opts: ServerOptio
       });
     },
   });
+
+  const ingress = opts.ingress ? ingressServer(opts.ingress) : null;
+  return {
+    server,
+    ingress,
+    stop() {
+      server.stop(true);
+      ingress?.stop(true);
+    },
+  };
 }

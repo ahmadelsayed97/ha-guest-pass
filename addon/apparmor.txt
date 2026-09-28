@@ -1,0 +1,19 @@
+#include <tunables/global>
+
+profile ha_guest_pass flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+
+  network,
+  signal,
+
+  /** rm,
+  /sbin/docker-init rix,
+  /usr/local/bin/bun rix,
+
+  /data/** rwk,
+  /tmp/** rwk,
+  /dev/shm/** rwk,
+  /dev/null rw,
+  /dev/tty rw,
+}

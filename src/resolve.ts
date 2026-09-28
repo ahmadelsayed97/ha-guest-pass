@@ -9,6 +9,8 @@ export interface AreaEntry {
 export interface DeviceEntry {
   id: string;
   area_id: string | null;
+  name?: string | null;
+  name_by_user?: string | null;
 }
 
 export interface EntityEntry {
@@ -35,26 +37,40 @@ export interface ResolvedScope {
 const EXCLUDED_CATEGORIES = new Set(["config", "diagnostic"]);
 const OPERABLE_DOMAINS = new Set(["light", "switch", "fan", "cover", "media_player", "climate", "humidifier", "vacuum"]);
 
+export interface SelectableEntity {
+  entityId: string;
+  areaId: string | null;
+  deviceId: string | null;
+}
+
+export function selectableEntities(registries: Registries): SelectableEntity[] {
+  const deviceAreas = new Map(registries.devices.map((d) => [d.id, d.area_id]));
+  const selectable: SelectableEntity[] = [];
+  for (const entry of registries.entities) {
+    if (entry.disabled_by !== null || entry.hidden_by !== null) continue;
+    if (entry.entity_category !== null && EXCLUDED_CATEGORIES.has(entry.entity_category)) continue;
+    const areaId = entry.area_id ?? (entry.device_id !== null ? deviceAreas.get(entry.device_id) : null) ?? null;
+    selectable.push({ entityId: entry.entity_id, areaId, deviceId: entry.device_id });
+  }
+  return selectable;
+}
+
 export function resolveScope(definition: ScopeDefinition, registries: Registries): ResolvedScope {
   const knownAreas = new Set(registries.areas.map((a) => a.area_id));
   for (const areaId of Object.keys(definition.areas)) {
     if (!knownAreas.has(areaId)) throw new Error(`unknown area: ${areaId}`);
   }
 
-  const deviceAreas = new Map(registries.devices.map((d) => [d.id, d.area_id]));
   const entities: Record<string, Permission> = {};
   const sources: Record<string, string> = {};
 
-  for (const entry of registries.entities) {
-    if (entry.disabled_by !== null || entry.hidden_by !== null) continue;
-    if (entry.entity_category !== null && EXCLUDED_CATEGORIES.has(entry.entity_category)) continue;
-    const areaId = entry.area_id ?? (entry.device_id !== null ? deviceAreas.get(entry.device_id) : null) ?? null;
+  for (const { entityId, areaId } of selectableEntities(registries)) {
     if (areaId === null) continue;
     const permission = definition.areas[areaId];
     if (permission === undefined) continue;
-    const domain = entry.entity_id.slice(0, entry.entity_id.indexOf("."));
-    entities[entry.entity_id] = permission === "control" && OPERABLE_DOMAINS.has(domain) ? "control" : "view";
-    sources[entry.entity_id] = `area:${areaId}`;
+    const domain = entityId.slice(0, entityId.indexOf("."));
+    entities[entityId] = permission === "control" && OPERABLE_DOMAINS.has(domain) ? "control" : "view";
+    sources[entityId] = `area:${areaId}`;
   }
 
   for (const [entityId, permission] of Object.entries(definition.entities)) {

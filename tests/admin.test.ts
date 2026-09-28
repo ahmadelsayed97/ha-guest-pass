@@ -12,6 +12,11 @@ const admin = (init: RequestInit = {}) => ({
   headers: { ...(init.headers as Record<string, string>), authorization: `Bearer ${ADMIN_SECRET}`, "content-type": "application/json" },
 });
 const url = (path: string) => new URL(path, h.proxyUrl);
+const ingress = (path: string) => new URL(path, h.ingressUrl);
+const asUser = (id: string, init: RequestInit = {}) => ({
+  ...init,
+  headers: { ...(init.headers as Record<string, string>), "x-remote-user-id": id, "x-remote-user-name": id, "content-type": "application/json" },
+});
 const definition = { dashboards: ["lovelace-guest"], areas: { kitchen: "control" }, entities: {} };
 
 describe("admin auth", () => {
@@ -21,6 +26,7 @@ describe("admin auth", () => {
     ["POST", "/admin/api/preview"],
     ["POST", "/admin/api/guests"],
     ["DELETE", "/admin/api/guests/x"],
+    ["POST", "/admin/api/guests/x/renew"],
   ])("%s %s without the admin secret is 401", async (method, path) => {
     expect((await fetch(url(path), { method })).status).toBe(401);
     expect((await fetch(url(path), { method, headers: { authorization: `Bearer ${h.token}` } })).status).toBe(401);
@@ -75,9 +81,14 @@ describe("admin api", () => {
     const res = await fetch(url("/admin/api/options"), admin());
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
+      guestPort: Number(h.proxyUrl.port),
       areas: [{ id: "kitchen", name: "Kitchen" }],
       dashboards: ["lovelace"],
-      entities: ["light.kitchen", "sensor.temp"],
+      devices: [{ id: "dev-1", name: "Fridge", area: "kitchen" }],
+      entities: [
+        { id: "light.kitchen", name: "Kitchen", area: "kitchen", device: null },
+        { id: "sensor.temp", name: "sensor.temp", area: "kitchen", device: "dev-1" },
+      ],
     });
   });
 
@@ -146,10 +157,130 @@ describe("admin api", () => {
     }
   });
 
+  describe("renew", () => {
+    const renew = (id: string, body: Record<string, unknown> = { durationMinutes: 120, origin: "http://proxy.lan:8124" }) =>
+      fetch(url(`/admin/api/guests/${id}/renew`), admin({ method: "POST", body: JSON.stringify(body) }));
+
+    test("a revoked guest gets a new record with the same name and scope and a new link", async () => {
+      await fetch(url(`/admin/api/guests/${h.guest.id}`), admin({ method: "DELETE" }));
+      const res = await renew(h.guest.id);
+      expect(res.status).toBe(201);
+      const body = await res.json();
+      expect(body.guest.id).not.toBe(h.guest.id);
+      expect(body.guest).toMatchObject({ name: h.guest.name, revokedAt: null, definition: h.guest.definition, entityCount: 3 });
+      expect(body.guest.expiresAt - body.guest.createdAt).toBe(120 * 60_000);
+      expect(body.link).toMatch(/^http:\/\/proxy\.lan:8124\/guest#eyJ/);
+      expect(h.store.get(body.guest.id)?.scope).toEqual(h.guest.scope);
+      expect(h.store.get(h.guest.id)?.revokedAt).toBeNumber();
+    });
+
+    test("the new link works and the old one stays dead", async () => {
+      await fetch(url(`/admin/api/guests/${h.guest.id}`), admin({ method: "DELETE" }));
+      const { link } = await (await renew(h.guest.id)).json();
+      const fresh = await fetch(url("/guest/session"), { headers: { authorization: `Bearer ${link.split("#")[1]}` } });
+      expect(fresh.status).toBe(200);
+      const old = await fetch(url("/guest/session"), { headers: { authorization: `Bearer ${h.token}` } });
+      expect(old.status).toBe(401);
+    });
+
+    test("an expired guest can be renewed", async () => {
+      const expired = h.store.create({ name: "Old", expiresAt: Date.now() - 1000, definition: h.guest.definition, scope: h.guest.scope });
+      expect((await renew(expired.id)).status).toBe(201);
+    });
+
+    test("an active guest cannot be renewed", async () => {
+      expect((await renew(h.guest.id)).status).toBe(409);
+      expect(h.store.list()).toHaveLength(1);
+    });
+
+    test("an unknown guest is 404", async () => {
+      expect((await renew("nope")).status).toBe(404);
+    });
+
+    test("duration and origin are validated like create", async () => {
+      await fetch(url(`/admin/api/guests/${h.guest.id}`), admin({ method: "DELETE" }));
+      expect((await renew(h.guest.id, { durationMinutes: 0, origin: "http://proxy.lan:8124" })).status).toBe(400);
+      expect((await renew(h.guest.id, { durationMinutes: 60, origin: "javascript:alert(1)" })).status).toBe(400);
+    });
+  });
+
   test("revoke marks the guest and a second revoke is 404", async () => {
     expect((await fetch(url(`/admin/api/guests/${h.guest.id}`), admin({ method: "DELETE" }))).status).toBe(200);
     expect(h.store.get(h.guest.id)?.revokedAt).toBeNumber();
     expect((await fetch(url(`/admin/api/guests/${h.guest.id}`), admin({ method: "DELETE" }))).status).toBe(404);
     expect((await fetch(url("/admin/api/guests/nope"), admin({ method: "DELETE" }))).status).toBe(404);
+  });
+});
+
+describe("ingress", () => {
+  test("an admin user identified by Supervisor gets in without any secret", async () => {
+    const res = await fetch(ingress("/admin/api/guests"), asUser("owner-1"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toHaveLength(1);
+  });
+
+  test("an admin user can create and revoke guests", async () => {
+    const created = await fetch(
+      ingress("/admin/api/guests"),
+      asUser("owner-1", { method: "POST", body: JSON.stringify({ name: "Via ingress", durationMinutes: 30, origin: "http://ha.local:8124", definition }) }),
+    );
+    expect(created.status).toBe(201);
+    const { guest, link } = await created.json();
+    expect(link.startsWith("http://ha.local:8124/guest#")).toBe(true);
+    const revoked = await fetch(ingress(`/admin/api/guests/${guest.id}`), asUser("owner-1", { method: "DELETE" }));
+    expect(revoked.status).toBe(200);
+  });
+
+  test("a non-admin Home Assistant user is refused", async () => {
+    const res = await fetch(ingress("/admin/api/guests"), asUser("kid-2"));
+    expect(res.status).toBe(403);
+  });
+
+  test("a deactivated administrator is refused", async () => {
+    const res = await fetch(ingress("/admin/api/guests"), asUser("gone-3"));
+    expect(res.status).toBe(403);
+  });
+
+  test("an unknown user id is refused", async () => {
+    const res = await fetch(ingress("/admin/api/guests"), asUser("nobody-9"));
+    expect(res.status).toBe(403);
+  });
+
+  test("a request without a Supervisor identity is refused", async () => {
+    expect((await fetch(ingress("/admin/api/guests"))).status).toBe(401);
+    expect((await fetch(ingress("/admin/api/guests"), admin())).status).toBe(401);
+  });
+
+  test("the identity headers mean nothing on the public port", async () => {
+    const res = await fetch(url("/admin/api/guests"), asUser("owner-1"));
+    expect(res.status).toBe(401);
+    expect(h.ha.received.map((m) => m.type)).not.toContain("config/auth/list");
+  });
+
+  test("the ingress page is served and calls its API by relative path", async () => {
+    const res = await fetch(ingress("/admin"), asUser("owner-1"));
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('"admin/api"');
+    expect(html).not.toContain('"/admin/api"');
+  });
+
+  test("options tell the page which port guests use", async () => {
+    const res = await fetch(ingress("/admin/api/options"), asUser("owner-1"));
+    expect((await res.json()).guestPort).toBe(Number(h.proxyUrl.port));
+  });
+});
+
+describe("ingress from the wrong peer", () => {
+  let wrong: Harness;
+  beforeEach(async () => {
+    wrong = await startHarness("192.168.1.50", 3600_000, "192.168.1.77");
+  });
+  afterEach(() => wrong.stop());
+
+  test("a LAN client spoofing the identity headers is refused", async () => {
+    const res = await fetch(new URL("/admin/api/guests", wrong.ingressUrl), asUser("owner-1"));
+    expect(res.status).toBe(403);
+    expect(wrong.ha.received.map((m) => m.type)).not.toContain("config/auth/list");
   });
 });

@@ -23,8 +23,11 @@ export const TEST_SCOPE = {
   entities: { "light.kitchen": "control" as const, "sensor.temp": "view" as const, "camera.front": "view" as const },
 };
 
+export const SUPERVISOR_ADDRESS = "172.30.32.2";
+
 export interface Harness {
   ha: FakeHA;
+  ingressUrl: URL;
   config: Config;
   store: GuestStore;
   guest: Guest;
@@ -34,7 +37,7 @@ export interface Harness {
   stop(): Promise<void>;
 }
 
-export async function startHarness(peerIp = "192.168.1.50", expiresIn = 3600_000): Promise<Harness> {
+export async function startHarness(peerIp = "192.168.1.50", expiresIn = 3600_000, ingressPeer = SUPERVISOR_ADDRESS): Promise<Harness> {
   const ha = startFakeHA();
   const dir = mkdtempSync(join(tmpdir(), "harness-"));
   const config = loadConfig({
@@ -49,18 +52,28 @@ export async function startHarness(peerIp = "192.168.1.50", expiresIn = 3600_000
   const guest = store.create({ name: "Guest", expiresAt: Date.now() + expiresIn, definition: TEST_DEFINITION, scope: TEST_SCOPE });
   const token = await signGuestToken({ guestId: guest.id, tokenId: guest.tokenId, expiresAt: guest.expiresAt }, config.signingKey);
   const auth = tokenAuthenticator(store, config.signingKey);
-  const proxy = createServer(config, { auth, store }, { log: silentLogger, port: 0, requestIP: () => peerIp });
-  const proxyUrl = new URL(`http://127.0.0.1:${proxy.port}`);
+  const proxy = createServer(
+    config,
+    { auth, store },
+    {
+      log: silentLogger,
+      port: 0,
+      requestIP: () => peerIp,
+      ingress: { hostname: "127.0.0.1", port: 0, supervisorAddress: SUPERVISOR_ADDRESS, requestIP: () => ingressPeer },
+    },
+  );
+  const proxyUrl = new URL(`http://127.0.0.1:${proxy.server.port}`);
   return {
     ha,
+    ingressUrl: new URL(`http://127.0.0.1:${proxy.ingress!.port}`),
     config,
     store,
     guest,
     token,
     proxyUrl,
-    wsUrl: `ws://127.0.0.1:${proxy.port}/api/websocket`,
+    wsUrl: `ws://127.0.0.1:${proxy.server.port}/api/websocket`,
     async stop() {
-      proxy.stop(true);
+      proxy.stop();
       ha.stop();
       await store.flush();
       rmSync(dir, { recursive: true, force: true });

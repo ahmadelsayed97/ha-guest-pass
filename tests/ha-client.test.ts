@@ -27,7 +27,7 @@ describe("HAClient", () => {
     const client = await HAClient.connect(configFor(ha.token));
     const [a, d] = await Promise.all([client.call("config/area_registry/list"), client.call("config/device_registry/list")]);
     expect(a).toEqual([{ area_id: "kitchen", name: "Kitchen" }]);
-    expect(d).toEqual([{ id: "dev-1", area_id: "kitchen" }]);
+    expect(d).toEqual([{ id: "dev-1", area_id: "kitchen", name: "Sensor Hub", name_by_user: "Fridge" }]);
     client.close();
   });
 

@@ -63,3 +63,31 @@ export async function fetchRegistries(client: HAClient): Promise<Registries> {
   ]);
   return { areas, devices, entities } as Registries;
 }
+
+const ADMIN_GROUP = "system-admin";
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isInGroup(user: Record<string, unknown>, group: string): boolean {
+  return Array.isArray(user.group_ids) && user.group_ids.includes(group);
+}
+
+export async function isAdminUser(config: Config, userId: string): Promise<boolean> {
+  let client: HAClient;
+  try {
+    client = await HAClient.connect(config);
+  } catch {
+    return false;
+  }
+  try {
+    const users = await client.call("config/auth/list");
+    if (!Array.isArray(users)) return false;
+    return users.some((user) => isObject(user) && user.id === userId && user.is_active === true && isInGroup(user, ADMIN_GROUP));
+  } catch {
+    return false;
+  } finally {
+    client.close();
+  }
+}

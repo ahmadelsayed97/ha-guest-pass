@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guest Pass</title>
+<style>
+  :root {
+    color-scheme: light;
+    --primary: #03a9f4;
+    --primary-text-on: #fff;
+    --bg: #fafafa;
+    --card: #fff;
+    --text: #212121;
+    --text-secondary: #727272;
+    --divider: #e0e0e0;
+    --input-bg: #fff;
+    --chip: #f0f0f0;
+    --error: #db4437;
+    --shadow: 0 2px 2px 0 rgba(0,0,0,.14), 0 1px 5px 0 rgba(0,0,0,.12), 0 3px 1px -2px rgba(0,0,0,.2);
+  }
+  :root[data-theme=dark] {
+    color-scheme: dark;
+    --bg: #111;
+      --card: #1c1c1c;
+      --text: #e1e1e1;
+      --text-secondary: #9b9b9b;
+      --divider: rgba(225,225,225,.12);
+      --input-bg: #111;
+      --chip: #2c2c2c;
+      --shadow: none;
+  }
+  body { font-family: Roboto, "Segoe UI", system-ui, sans-serif; margin: 0; background: var(--bg); color: var(--text); -webkit-font-smoothing: antialiased; }
+  main { max-width: 900px; margin: 0 auto; padding: 16px 16px 64px; }
+  header { display: flex; align-items: center; justify-content: space-between; margin: 8px 0 16px; }
+  h1 { font-size: 20px; font-weight: 400; margin: 0; }
+  header select { width: auto; padding: 6px 28px 6px 10px; font-size: 13px; }
+  h2 { font-size: 18px; font-weight: 400; margin: 0 0 16px; }
+  section { background: var(--card); border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: var(--shadow); }
+  label { display: block; margin: 16px 0 6px; font-size: 14px; color: var(--text-secondary); }
+  input, select, button { font: inherit; }
+  input[type=text], input[type=password], select { width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 4px; border: 1px solid var(--divider); background: var(--input-bg); color: var(--text); }
+  input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -1px; }
+  button { padding: 0 16px; height: 36px; border-radius: 4px; border: 0; background: var(--primary); color: var(--primary-text-on); cursor: pointer; margin-right: 8px; margin-top: 16px; font-weight: 500; letter-spacing: .02em; text-transform: uppercase; font-size: 14px; }
+  button.secondary { background: transparent; color: var(--primary); }
+  button.danger { background: transparent; color: var(--error); margin: 0; height: 32px; }
+  button.inline { margin: 0; height: 32px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td, th { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--divider); vertical-align: middle; }
+  th { color: var(--text-secondary); font-weight: 500; }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--divider); }
+  .row:last-child { border-bottom: 0; }
+  .pill { display: inline-flex; border: 1px solid var(--divider); border-radius: 16px; overflow: hidden; }
+  .pill label { margin: 0; }
+  .pill input { display: none; }
+  .pill span { display: inline-block; padding: 5px 12px; background: var(--chip); color: var(--text-secondary); cursor: pointer; font-size: 13px; }
+  .pill input:checked + span { background: var(--primary); color: var(--primary-text-on); }
+  .group { margin: 16px 0 4px; font-size: 14px; color: var(--text-secondary); }
+  .device > span { display: flex; align-items: center; gap: 8px; }
+  .toggle { width: 28px; height: 28px; margin: 0; padding: 0; border-radius: 50%; background: transparent; color: var(--text-secondary); font-size: 14px; }
+  .nested { margin-left: 36px; }
+  .name { display: block; }
+  .id { display: block; color: var(--text-secondary); font-size: 12px; }
+  .muted { color: var(--text-secondary); font-size: 14px; }
+  .error { color: var(--error); margin-top: 8px; font-size: 14px; }
+  #qr svg { width: 220px; height: 220px; background: #fff; padding: 8px; border-radius: 8px; }
+  code { word-break: break-all; font-size: 13px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Guest Pass</h1>
+    <select id="theme" aria-label="Theme">
+      <option value="auto">Auto</option>
+      <option value="light">Light</option>
+      <option value="dark">Dark</option>
+    </select>
+  </header>
+
+  <section id="login">
+    <label for="secret">Admin secret</label>
+    <input id="secret" type="password" autocomplete="current-password">
+    <button id="loginBtn">Continue</button>
+    <div id="loginError" class="error"></div>
+  </section>
+
+  <div id="app" class="hidden">
+    <section>
+      <h2>New guest</h2>
+      <label for="name">Name</label>
+      <input id="name" type="text" maxlength="64" placeholder="Who is this for?">
+      <label for="duration">Access lasts</label>
+      <select id="duration">
+        <option value="60">1 hour</option>
+        <option value="180">3 hours</option>
+        <option value="720">12 hours</option>
+        <option value="1440" selected>1 day</option>
+        <option value="4320">3 days</option>
+        <option value="10080">1 week</option>
+        <option value="43200">30 days</option>
+      </select>
+      <label>Dashboards</label>
+      <div id="dashboards"></div>
+      <label>Areas</label>
+      <div id="areas"></div>
+      <label>Entities <span id="summary" class="muted"></span></label>
+      <div id="entities" class="muted">Pick an area above, or add entities one by one.</div>
+      <label for="addEntity">Add an entity outside those areas</label>
+      <input id="addEntity" type="text" list="entityList" placeholder="Start typing a name">
+      <datalist id="entityList"></datalist>
+      <button id="createBtn">Create link</button>
+      <div id="formError" class="error"></div>
+    </section>
+
+    <section id="result" class="hidden">
+      <h2>Link for <span id="resultName"></span></h2>
+      <p class="muted">Anyone with this link has the access above until it expires. Send it directly.</p>
+      <p><code id="link"></code></p>
+      <button id="copyBtn" class="secondary">Copy link</button>
+      <div id="qr"></div>
+    </section>
+
+    <section>
+      <h2>Guests</h2>
+      <p class="muted">Renew gives an ended guest a new link with the same access, for the duration chosen above.</p>
+      <table><thead><tr><th>Name</th><th>Access</th><th>Expires</th><th></th></tr></thead><tbody id="guests"></tbody></table>
+    </section>
+  </div>
+</main>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var darkMedia = matchMedia("(prefers-color-scheme: dark)");
+
+  function applyTheme() {
+    var pref = "auto";
+    try { pref = localStorage.getItem("theme") || "auto"; } catch (e) {}
+    var dark = pref === "dark" || (pref === "auto" && darkMedia.matches);
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+    $("theme").value = pref;
+  }
+
+  darkMedia.onchange = applyTheme;
+  $("theme").onchange = function () {
+    try { localStorage.setItem("theme", $("theme").value); } catch (e) {}
+    applyTheme();
+  };
+  applyTheme();
+  var secret = sessionStorage.getItem("adminSecret") || "";
+  var options = null;
+
+  function api(method, path, body) {
+    var headers = { "content-type": "application/json" };
+    if (secret) headers.authorization = "Bearer " + secret;
+    return fetch("admin/api" + path, {
+      method: method,
+      headers: headers,
+      body: body === undefined ? undefined : JSON.stringify(body)
+    }).then(function (res) {
+      return res.json().then(function (data) {
+        if (res.status === 401) { logout(); throw new Error("Wrong admin secret"); }
+        if (!res.ok) throw new Error(data.error || ("Request failed (" + res.status + ")"));
+        return data;
+      });
+    });
+  }
+
+  function logout() {
+    secret = "";
+    sessionStorage.removeItem("adminSecret");
+    $("app").classList.add("hidden");
+    $("login").classList.remove("hidden");
+  }
+
+  function esc(text) { return String(text).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+
+  function pill(name, values, checked) {
+    return '<span class="pill">' + values.map(function (v) {
+      return '<label><input type="radio" name="' + esc(name) + '" value="' + v + '"' + (v === checked ? " checked" : "") + '><span>' + v + '</span></label>';
+    }).join("") + '</span>';
+  }
+
+  var overrides = {};
+  var resolved = { entities: {} };
+  var refreshTimer = null;
+
+  function renderOptions() {
+    $("dashboards").innerHTML = options.dashboards.map(function (d) {
+      return '<div class="row"><span>' + esc(d) + '</span><input type="checkbox" name="dashboard" value="' + esc(d) + '"></div>';
+    }).join("");
+    $("areas").innerHTML = options.areas.map(function (a) {
+      return '<div class="row"><span>' + esc(a.name) + '</span>' + pill("area:" + a.id, ["none", "view", "control"], "none") + '</div>';
+    }).join("");
+    $("entityList").innerHTML = options.entities.map(function (e) {
+      return '<option value="' + esc(e.id) + '">' + esc(e.name) + '</option>';
+    }).join("");
+  }
+
+  function selectedAreas() {
+    var areas = {};
+    options.areas.forEach(function (a) {
+      var v = document.querySelector('input[name="area:' + a.id + '"]:checked').value;
+      if (v !== "none") areas[a.id] = v;
+    });
+    return areas;
+  }
+
+  function definition() {
+    var dashboards = Array.prototype.map.call(document.querySelectorAll('input[name=dashboard]:checked'), function (el) { return el.value; });
+    return { dashboards: dashboards, areas: selectedAreas(), entities: overrides };
+  }
+
+  var expanded = {};
+
+  function levelOf(id) { return resolved.entities[id] || "off"; }
+
+  function entityRow(e) {
+    return '<div class="row"><span><span class="name">' + esc(e.name) + '</span><span class="id">' + esc(e.id) + '</span></span>' + pill("entity:" + e.id, ["off", "view", "control"], levelOf(e.id)) + '</div>';
+  }
+
+  function deviceBlock(d, rows) {
+    var levels = {};
+    rows.forEach(function (e) { levels[levelOf(e.id)] = true; });
+    var keys = Object.keys(levels);
+    var level = keys.length === 1 ? keys[0] : "mixed";
+    var open = !!expanded[d.id];
+    return '<div class="row device"><span><button type="button" class="toggle" data-toggle="' + esc(d.id) + '" aria-expanded="' + open + '">' + (open ? "&#9662;" : "&#9656;") + '</button><span><span class="name">' + esc(d.name) + '</span><span class="id">' + rows.length + ' entities' + (level === "mixed" ? ", mixed" : "") + '</span></span></span>' + pill("device:" + d.id, ["off", "view", "control"], level) + '</div>'
+      + '<div class="nested' + (open ? "" : " hidden") + '">' + rows.map(entityRow).join("") + '</div>';
+  }
+
+  function areaBlock(a, rows) {
+    var byDevice = {};
+    var loose = [];
+    rows.forEach(function (e) {
+      if (e.device) (byDevice[e.device] = byDevice[e.device] || []).push(e);
+      else loose.push(e);
+    });
+    var html = '<div class="group">' + esc(a.name) + '</div>';
+    options.devices.forEach(function (d) {
+      if (byDevice[d.id]) html += byDevice[d.id].length > 1 ? deviceBlock(d, byDevice[d.id]) : entityRow(byDevice[d.id][0]);
+    });
+    html += loose.map(entityRow).join("");
+    return html;
+  }
+
+  function renderEntities() {
+    var areas = selectedAreas();
+    var shown = {};
+    var html = "";
+    options.areas.forEach(function (a) {
+      if (!areas[a.id]) return;
+      var rows = options.entities.filter(function (e) { return e.area === a.id; });
+      if (!rows.length) return;
+      rows.forEach(function (e) { shown[e.id] = true; });
+      html += areaBlock(a, rows);
+    });
+    var added = options.entities.filter(function (e) { return overrides[e.id] && overrides[e.id] !== "none" && !shown[e.id]; });
+    if (added.length) html += '<div class="group">Added</div>' + added.map(entityRow).join("");
+    $("entities").innerHTML = html || 'Pick an area above, or add entities one by one.';
+    $("entities").className = html ? "" : "muted";
+    var ids = Object.keys(resolved.entities);
+    var control = ids.filter(function (id) { return resolved.entities[id] === "control"; }).length;
+    $("summary").textContent = ids.length ? ids.length + " visible, " + control + " controllable" : "";
+  }
+
+  function refresh() {
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(function () {
+      $("formError").textContent = "";
+      api("POST", "/preview", definition()).then(function (r) {
+        resolved = r;
+        renderEntities();
+      }).catch(function (e) { showError("formError", e); });
+    }, 150);
+  }
+
+  function showError(id, err) { $(id).textContent = err.message; }
+
+  function renderGuests(guests) {
+    var now = Date.now();
+    $("guests").innerHTML = guests.map(function (g) {
+      var state = g.revokedAt ? "revoked" : g.expiresAt < now ? "expired" : "active";
+      var access = g.entityCount + " entities, " + g.dashboards.join(", ");
+      var action = state === "active"
+        ? '<button class="danger" data-revoke="' + esc(g.id) + '">Revoke</button>'
+        : '<span class="muted">' + state + '</span> <button class="secondary inline" data-renew="' + esc(g.id) + '">Renew</button>';
+      return '<tr><td>' + esc(g.name) + '</td><td>' + esc(access) + '</td><td>' + new Date(g.expiresAt).toLocaleString() + '</td><td>' + action + '</td></tr>';
+    }).join("") || '<tr><td colspan="4" class="muted">No guests yet.</td></tr>';
+  }
+
+  function loadGuests() { return api("GET", "/guests").then(renderGuests); }
+
+  function start(probing) {
+    return api("GET", "/options").then(function (o) {
+      options = o;
+      $("login").classList.add("hidden");
+      $("app").classList.remove("hidden");
+      renderOptions();
+      return loadGuests();
+    }).catch(function (e) { if (!probing) showError("loginError", e); });
+  }
+
+  function guestOrigin() { return "http://" + location.hostname + ":" + options.guestPort; }
+
+  $("loginBtn").onclick = function () {
+    secret = $("secret").value.trim();
+    sessionStorage.setItem("adminSecret", secret);
+    start(false);
+  };
+
+  $("areas").onchange = function () { refresh(); };
+  $("dashboards").onchange = function () { refresh(); };
+
+  $("entities").onchange = function (ev) {
+    var name = ev.target.name || "";
+    var level = ev.target.value === "off" ? "none" : ev.target.value;
+    if (name.indexOf("entity:") === 0) {
+      overrides[name.slice(7)] = level;
+    } else if (name.indexOf("device:") === 0) {
+      var deviceId = name.slice(7);
+      options.entities.forEach(function (e) { if (e.device === deviceId) overrides[e.id] = level; });
+    } else return;
+    refresh();
+  };
+
+  $("entities").onclick = function (ev) {
+    var button = ev.target.closest ? ev.target.closest("[data-toggle]") : null;
+    if (!button) return;
+    var id = button.getAttribute("data-toggle");
+    expanded[id] = !expanded[id];
+    renderEntities();
+  };
+
+  $("addEntity").onchange = function () {
+    var id = $("addEntity").value.trim();
+    var known = options.entities.some(function (e) { return e.id === id; });
+    if (!known) return;
+    overrides[id] = "view";
+    $("addEntity").value = "";
+    refresh();
+  };
+
+  $("createBtn").onclick = function () {
+    $("formError").textContent = "";
+    try {
+      var body = { name: $("name").value, durationMinutes: Number($("duration").value), definition: definition(), origin: guestOrigin() };
+      api("POST", "/guests", body).then(function (r) {
+        showLink(r);
+        return loadGuests();
+      }).catch(function (e) { showError("formError", e); });
+    } catch (e) { showError("formError", e); }
+  };
+
+  function showLink(r) {
+    $("resultName").textContent = r.guest.name;
+    $("link").textContent = r.link;
+    $("qr").innerHTML = r.qrSvg;
+    $("result").classList.remove("hidden");
+    $("copyBtn").onclick = function () { navigator.clipboard.writeText(r.link); };
+    $("result").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  $("guests").onclick = function (ev) {
+    var revoke = ev.target.getAttribute("data-revoke");
+    var renew = ev.target.getAttribute("data-renew");
+    if (revoke) api("DELETE", "/guests/" + revoke).then(loadGuests).catch(function (e) { alert(e.message); });
+    if (renew) {
+      api("POST", "/guests/" + renew + "/renew", { durationMinutes: Number($("duration").value), origin: guestOrigin() })
+        .then(function (r) { showLink(r); return loadGuests(); })
+        .catch(function (e) { alert(e.message); });
+    }
+  };
+
+  start(true);
+})();
+</script>
+</body>
+</html>

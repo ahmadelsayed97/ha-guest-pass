@@ -112,12 +112,19 @@ export function startFakeHA(token = "REAL-HA-TOKEN-" + crypto.randomUUID()): Fak
             result([{ area_id: "kitchen", name: "Kitchen" }]);
             return;
           case "config/device_registry/list":
-            result([{ id: "dev-1", area_id: "kitchen" }]);
+            result([{ id: "dev-1", area_id: "kitchen", name: "Sensor Hub", name_by_user: "Fridge" }]);
             return;
           case "config/entity_registry/list":
             result([
               { entity_id: "light.kitchen", area_id: "kitchen", device_id: null, disabled_by: null, hidden_by: null, entity_category: null },
               { entity_id: "sensor.temp", area_id: null, device_id: "dev-1", disabled_by: null, hidden_by: null, entity_category: null },
+            ]);
+            return;
+          case "config/auth/list":
+            result([
+              { id: "owner-1", name: "Owner", is_owner: true, is_active: true, group_ids: ["system-admin"] },
+              { id: "kid-2", name: "Kid", is_owner: false, is_active: true, group_ids: ["system-users"] },
+              { id: "gone-3", name: "Former admin", is_owner: false, is_active: false, group_ids: ["system-admin"] },
             ]);
             return;
           case "lovelace/dashboards/list":

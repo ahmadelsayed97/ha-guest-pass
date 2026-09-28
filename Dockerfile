@@ -9,4 +9,5 @@ COPY public ./public
 ENV GUEST_STORE_FILE=/data/guests.json
 EXPOSE 8124
 HEALTHCHECK --interval=30s --timeout=3s CMD wget -qO- "http://127.0.0.1:${PORT:-8124}/health" || exit 1
+ENTRYPOINT []
 CMD ["bun", "run", "src/index.ts"]
